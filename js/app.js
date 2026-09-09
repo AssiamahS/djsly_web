@@ -1,5 +1,5 @@
 /* djsly — UI + glue. The controller mapping and the on-screen skin both talk to the small `app` API below. */
-import { Engine, ROLL_SIZES } from './engine.js';
+import { Engine, ROLL_SIZES, STEMS } from './engine.js';
 import { Library } from './library.js';
 import { Midi } from './midi.js';
 
@@ -33,6 +33,7 @@ const app = {
       case 'headCue': if (pressed) dk.setCue(!dk.cueOn); break;
       case 'deckSelect': if (pressed) toast('Decks 3/4 are not in v1'); break;
       case 'masterCue': if (pressed) this.setSplit(!this.engine.splitCue); break;
+      case 'quantize': if (pressed) { dk.quantize = !dk.quantize; toast(`Quantize ${dk.quantize ? 'on' : 'off'}`); } break;
     }
     this.render();
   },
@@ -41,7 +42,7 @@ const app = {
     switch (mode) {
       case 'hotcue': dk.hotcue(i, pressed, shift); break;
       case 'fxfade': dk.padFx(i, pressed); break;
-      case 'padscratch': dk.padScratch(i, pressed); break;
+      case 'stems': dk.stemPad(i, pressed); break;
       case 'sampler': if (shift) this.engine.sampler.stop(d * 8 + i); else if (pressed) this.engine.sampler.play(d * 8 + i, vel); break;
       case 'beatjump': if (pressed) dk.beatJump([-1, 1, -2, 2, -4, 4, -8, 8][i] * (shift ? 4 : 1)); break;
       case 'roll': dk.loopRoll(ROLL_SIZES[i], pressed); break;
@@ -49,7 +50,7 @@ const app = {
       case 'trans': dk.transPad(i, pressed); break;
     }
     this.padDom[d][i]?.classList.toggle('on', pressed);
-    if (mode === 'hotcue' || mode === 'sampler') this.render();
+    if (mode === 'hotcue' || mode === 'sampler' || mode === 'stems') this.render();
   },
   setPadMode(d, mode) { this.engine.decks[d].padMode = mode; this.render(); },
   knob(d, k, x) { const dk = this.engine.decks[d]; if (k === 'tempo') dk.setTempo(x); else dk.setKnob(k, x); },
@@ -80,7 +81,7 @@ const app = {
   async analyzeTrack(id) {
     const t = await this.getBuffer(id); if (t.an) return t.an;
     t.an = await this.engine.analyze(t.buffer, 600);
-    const patch = { bpm: t.an.bpm, firstBeat: t.an.firstBeat, duration: t.buffer.duration };
+    const patch = { bpm: t.an.bpm, firstBeat: t.an.firstBeat, duration: t.buffer.duration, key: t.an.key, camelot: t.an.camelot };
     Object.assign(this.lib.find(x => x.id === id) || {}, patch); await Library.update(id, patch); this.renderLib();
     return t.an;
   },
@@ -89,8 +90,25 @@ const app = {
     const meta = this.lib.find(x => x.id === id); toast(`Loading ${meta.name}…`);
     const t = await this.getBuffer(id); const an = await this.analyzeTrack(id);
     this.deckAn[d] = an; this.buildOverview(d, an);
-    await dk.load({ ...meta, bpm: an.bpm, firstBeat: an.firstBeat, buffer: t.buffer });
+    let stems = null;
+    if (meta.hasStems) {
+      if (!t.stems) { const row = await Library.get(id); t.stems = {}; for (const n of STEMS) t.stems[n] = await this.engine.decode(await row.stems[n].arrayBuffer()); }
+      stems = t.stems;
+    }
+    await dk.load({ ...meta, bpm: an.bpm, firstBeat: an.firstBeat, key: an.key, camelot: an.camelot, buffer: t.buffer, stems });
     this.renderInfo(d); this.render(); toast(`${d ? 'B' : 'A'}: ${meta.name} · ${an.bpm} BPM`);
+  },
+  importStems(id) {
+    const inp = $('#stemFile');
+    inp.onchange = async () => {
+      const files = [...inp.files]; inp.value = ''; const got = {};
+      for (const f of files) { const n = STEMS.find(s => f.name.toLowerCase().includes(s)); if (n) got[n] = f; }
+      const missing = STEMS.filter(s => !got[s]);
+      if (missing.length) return toast(`Need vocals/other/bass/drums files — missing ${missing.join(', ')}`);
+      await Library.update(id, { stems: got }); const m = this.lib.find(x => x.id === id); if (m) m.hasStems = true; const t = this.tracks.get(id); if (t) t.stems = null;
+      this.renderLib(); toast('Stems attached — load the track again');
+    };
+    inp.click();
   },
   showView(v) { this.view = v; $$('#tabs button').forEach(b => b.classList.toggle('on', b.dataset.view === v)); $$('.view').forEach(s => s.classList.toggle('on', s.dataset.view === v)); },
   /* ---- rendering ---- */
@@ -99,7 +117,7 @@ const app = {
   _render() {
     this.engine.decks.forEach((dk, d) => {
       const b = this.btn[d]; const set = (k, on) => b[k]?.classList.toggle('on', !!on);
-      set('play', dk.playing); set('cue', dk.buffer && !dk.playing); set('sync', dk.synced); set('autoloop', dk.loop.on); set('vinyl', dk.vinyl); set('keylock', dk.keylock); set('headCue', dk.cueOn); set('shift', this.shift);
+      set('play', dk.playing); set('cue', dk.buffer && !dk.playing); set('quantize', dk.quantize); set('sync', dk.synced); set('autoloop', dk.loop.on); set('vinyl', dk.vinyl); set('keylock', dk.keylock); set('headCue', dk.cueOn); set('shift', this.shift);
       b.tempoRange && (b.tempoRange.textContent = `±${Math.round(dk.tempoRange * 100)}%`);
       $$('.padmodes .btn', this.deckEl[d]).forEach(x => x.classList.toggle('on', x.dataset.mode === dk.padMode));
       this.padDom[d].forEach((p, i) => {
@@ -111,7 +129,8 @@ const app = {
         else if (m === 'slicer') { label = `slice ${i + 1}`; lit = true; }
         else if (m === 'trans') { label = ROLL_SIZES[i] < 1 ? `1/${1 / ROLL_SIZES[i]}` : `${ROLL_SIZES[i]}`; lit = true; sub = 'gate'; }
         else if (m === 'fxfade') { label = ['filter 1', 'filter 2', 'filter 4', 'filter 8', 'brake', 'backspin', 'echo out', 'reverse'][i]; lit = true; }
-        else if (m === 'padscratch') { label = ['baby', 'chirp', 'stab', 'drag', 'flick', 'pull', 'crab', 'tear'][i]; lit = true; }
+        else if (m === 'stems') { label = ['Vocal', 'Melody', 'Bass', 'Drums', 'Acapella', 'Instru', 'Vocal echo', 'Drums echo'][i]; sub = i < 4 ? (dk.hasStems ? 'stem' : 'lite') : i < 6 ? 'toggle' : 'hold';
+          lit = i < 4 ? dk.stemOn[i] : i === 4 ? (dk.stemOn[0] && !dk.stemOn[1] && !dk.stemOn[2] && !dk.stemOn[3]) : i === 5 ? (!dk.stemOn[0] && dk.stemOn[1] && dk.stemOn[2] && dk.stemOn[3]) : true; }
         p.classList.toggle('lit', lit); p.classList.toggle('b', d === 1); p.innerHTML = `<b>${label}</b><span>${sub}</span>`;
       });
       [0, 1, 2].forEach(i => this.fxDom?.[d]?.[i]?.classList.toggle('on', dk.fx.on[i]));
@@ -123,17 +142,19 @@ const app = {
     const dk = this.engine.decks[d], info = $(`#info${d}`);
     $('.title', info).textContent = dk.track ? (dk.track.title || dk.track.name) : 'No track';
     $('.artist', info).textContent = dk.track ? (dk.track.artist || '') : (d ? 'Load B' : 'Load A');
+    const k = $('.key', info); k.textContent = dk.track?.camelot || ''; k.dataset.c = dk.track?.camelot || ''; k.title = dk.track?.key || '';
   },
   renderLib() {
     const list = $('#libList'); list.innerHTML = '';
     if (!this.lib.length) { list.append(el('div', 'empty', 'No tracks yet. Tap “+ Add tracks”.')); return; }
     this.lib.forEach((t, i) => {
       const row = el('div', 'track' + (i === this.sel ? ' sel' : ''));
-      row.innerHTML = `<div class="nm">${t.title || t.name}<small>${t.artist || ''}</small></div><div class="bpm">${t.bpm ? t.bpm.toFixed(1) : '…'}</div><div class="dur">${t.duration ? fmtT(t.duration) : ''}</div>`;
-      const a = el('button', 'btn', 'A'), b = el('button', 'btn blue', 'B'), x = el('button', 'del', '✕');
+      row.innerHTML = `<div class="nm">${t.title || t.name}<small>${t.artist || ''}${t.hasStems ? ' · <em>STEMS</em>' : ''}</small></div><span class="key" data-c="${t.camelot || ''}" title="${t.key || ''}">${t.camelot || ''}</span><div class="bpm">${t.bpm ? t.bpm.toFixed(1) : '…'}</div><div class="dur">${t.duration ? fmtT(t.duration) : ''}</div>`;
+      const a = el('button', 'btn', 'A'), b = el('button', 'btn blue', 'B'), st = el('button', 'btn tiny' + (t.hasStems ? ' on' : ''), 'Stems'), x = el('button', 'del', '✕');
+      st.onclick = e => { e.stopPropagation(); this.importStems(t.id); };
       a.onclick = e => { e.stopPropagation(); this.loadToDeck(0, t.id); }; b.onclick = e => { e.stopPropagation(); this.loadToDeck(1, t.id); };
       x.onclick = async e => { e.stopPropagation(); if (!confirm(`Remove ${t.name}?`)) return; await Library.remove(t.id); this.lib = this.lib.filter(z => z.id !== t.id); this.tracks.delete(t.id); this.renderLib(); };
-      row.append(a, b, x); row.onclick = () => { this.sel = i; this.renderLib(); }; list.append(row);
+      row.append(a, b, st, x); row.onclick = () => { this.sel = i; this.renderLib(); }; list.append(row);
     });
     const s = $('.track.sel', list); s?.scrollIntoView?.({ block: 'nearest' });
   },
@@ -195,7 +216,7 @@ function buildDeck(d) {
   const dk = app.engine.decks[d], root = $(`#deck${d}`); root.innerHTML = ''; app.deckEl ||= []; app.deckEl[d] = root;
   const B = (key, label, cls = '', action = key) => { const b = el('button', `btn ${cls}`, label); hold(b, on => app.act(d, action, on, app.shift)); app.btn[d][key] = b; return b; };
   const loop = el('div', 'looprow');
-  loop.append(B('loopIn', 'In', 'orange'), B('loopOut', 'Out', 'orange'), B('autoloop', '4 beat<br>/exit', 'tiny'), B('loopHalve', '½', 'tiny'), B('loopDouble', '2×', 'tiny'), B('reloop', 'reloop', 'tiny'), el('span', 'sp'), B('sync', 'Beat<br>sync', 'blue'), B('keylock', 'Key<br>lock', 'tiny green'));
+  loop.append(B('loopIn', 'In', 'orange'), B('loopOut', 'Out', 'orange'), B('autoloop', '4 beat<br>/exit', 'tiny'), B('loopHalve', '½', 'tiny'), B('loopDouble', '2×', 'tiny'), B('reloop', 'reloop', 'tiny'), el('span', 'sp'), B('quantize', 'Q', 'tiny green'), B('sync', 'Beat<br>sync', 'blue'), B('keylock', 'Key<br>lock', 'tiny green'));
   const tr = el('div', 'transport');
   const shiftB = el('button', 'btn shift', 'Shift'); hold(shiftB, on => { app.shift = on; app.render(); }); app.btn[d].shift = shiftB;
   tr.append(shiftB, B('cue', 'Cue', 'round orange'), B('play', '▶ ❚❚', 'big green'));
@@ -204,8 +225,8 @@ function buildDeck(d) {
   const tl = el('div', 'klabel', 'Tempo'); const tRange = el('button', 'btn tiny', '±8%'); hold(tRange, on => app.act(d, 'tempoRange', on)); app.btn[d].tempoRange = tRange;
   tw.append(B('vinyl', 'Vinyl', 'tiny'), tf, tl, tRange, B('headCue', '🎧 Cue', 'tiny blue'));
   const ps = el('div', 'padsec'); const modes = el('div', 'padmodes');
-  [['hotcue', 'Hot cue', 'beat jump'], ['fxfade', 'FX fade', 'roll'], ['padscratch', 'Pad scratch', 'slicer'], ['sampler', 'Sampler', 'trans']].forEach(([m, l, s]) => {
-    const b = el('button', 'btn', `${l}<small>${s}</small>`); b.dataset.mode = m; hold(b, on => { if (on) app.setPadMode(d, app.shift ? { hotcue: 'beatjump', fxfade: 'roll', padscratch: 'slicer', sampler: 'trans' }[m] : m); }); modes.append(b);
+  [['hotcue', 'Hot cue', 'beat jump'], ['fxfade', 'FX fade', 'roll'], ['sampler', 'Sampler', 'slicer'], ['stems', 'Stems', 'trans']].forEach(([m, l, s]) => {
+    const b = el('button', 'btn', `${l}<small>${s}</small>`); b.dataset.mode = m; hold(b, on => { if (on) app.setPadMode(d, app.shift ? { hotcue: 'beatjump', fxfade: 'roll', sampler: 'slicer', stems: 'trans' }[m] : m); }); modes.append(b);
   });
   const grid = el('div', 'padgrid');
   for (let i = 0; i < 8; i++) { const p = el('div', 'pad'); hold(p, (on, e) => app.pad(d, i, on, e?.pressure ? Math.max(0.4, e.pressure) : 1, app.shift)); grid.append(p); app.padDom[d][i] = p; }

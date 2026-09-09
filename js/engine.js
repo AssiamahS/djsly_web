@@ -1,5 +1,6 @@
 /* djsly audio engine — decks, mixer, sampler, fx, recorder (Web Audio) */
-export const PAD_MODES = ['hotcue', 'fxfade', 'padscratch', 'sampler', 'beatjump', 'roll', 'slicer', 'trans'];
+export const PAD_MODES = ['hotcue', 'fxfade', 'sampler', 'stems', 'beatjump', 'roll', 'slicer', 'trans'];
+export const STEMS = ['vocals', 'other', 'bass', 'drums']; // demucs names; UI: Vocal / Melody / Bass / Drums
 export const ROLL_SIZES = [1 / 16, 1 / 8, 1 / 4, 1 / 2, 1, 2, 4, 8];
 
 const clamp = (v, a, b) => Math.max(a, Math.min(b, v));
@@ -22,14 +23,15 @@ export class Deck extends Emitter {
     this.tempoRange = 0.08; this.tempoSlider = 0; this.keylock = false; this.vinyl = true; this.slip = false;
     this.jogTouched = false; this.reverse = false;
     this.loop = { in: -1, out: -1, on: false }; this.roll = null; this.slicer = null; this.trans = null;
-    this.padMode = 'hotcue'; this.jumpSize = 4; this.cueOn = false;
+    this.padMode = 'hotcue'; this.jumpSize = 4; this.cueOn = false; this.quantize = true;
+    this.hasStems = false; this.stemOn = [true, true, true, true];
     this.knobs = { trim: 0.5, hi: 0.5, mid: 0.5, low: 0.5, cfx: 0.5, fader: 1 };
     this.level = 0;
     this._buildGraph();
   }
   _buildGraph() {
     const c = this.ctx;
-    this.node = new AudioWorkletNode(c, 'deck-processor', { numberOfInputs: 0, numberOfOutputs: 1, outputChannelCount: [2] });
+    this.node = new AudioWorkletNode(c, 'deck-processor', { numberOfInputs: 0, numberOfOutputs: 4, outputChannelCount: [2, 2, 2, 2] });
     this.node.port.onmessage = e => this._onWorklet(e.data);
     this.trim = c.createGain();
     this.eqLow = c.createBiquadFilter(); this.eqLow.type = 'lowshelf'; this.eqLow.frequency.value = 120;
@@ -43,10 +45,18 @@ export class Deck extends Emitter {
     this.fx = new FxUnit(this.engine, this);
     this.xfGain = c.createGain();
     this.cueTap = c.createGain();
-    this.node.connect(this.trim); this.trim.connect(this.eqLow); this.eqLow.connect(this.eqMid); this.eqMid.connect(this.eqHi);
+    // stems: 4 gains summed into trim. Real stems = worklet outputs 0..3; otherwise output 0 split into 4 bands ("lite")
+    this.stemGain = [0, 1, 2, 3].map(() => c.createGain()); this.stemSend = [0, 1, 2, 3].map(() => { const g = c.createGain(); g.gain.value = 0; return g; });
+    this.stemSum = c.createGain(); this.stemGain.forEach((g, k) => { g.connect(this.stemSum); g.connect(this.stemSend[k]); }); this.stemSum.connect(this.trim);
+    const bp = (lo, hi) => { const h = c.createBiquadFilter(); h.type = 'highpass'; h.frequency.value = lo; const l = c.createBiquadFilter(); l.type = 'lowpass'; l.frequency.value = hi; h.connect(l); return { in: h, out: l }; };
+    const lp = f => { const l = c.createBiquadFilter(); l.type = 'lowpass'; l.frequency.value = f; return { in: l, out: l }; };
+    const hp = f => { const h = c.createBiquadFilter(); h.type = 'highpass'; h.frequency.value = f; return { in: h, out: h }; };
+    this.bands = [bp(400, 3500), bp(3500, 7000), lp(150), [bp(150, 400), hp(7000)]]; // vocal-ish, melody-ish, bass, drums-ish
+    this._routeStems();
+    this.trim.connect(this.eqLow); this.eqLow.connect(this.eqMid); this.eqMid.connect(this.eqHi);
     this.eqHi.connect(this.lpf); this.lpf.connect(this.hpf); this.hpf.connect(this.transGain);
     this.transGain.connect(this.analyser); this.transGain.connect(this.fader); this.transGain.connect(this.cueTap);
-    this.fader.connect(this.fx.input); this.fx.output.connect(this.xfGain);
+    this.fader.connect(this.fx.input); this.fx.output.connect(this.xfGain); this.stemSend.forEach(s => s.connect(this.fx.echo));
     this.xfGain.connect(this.engine.masterIn); this.cueTap.connect(this.engine.cueBus);
     this.cueTap.gain.value = 0;
   }
@@ -56,13 +66,33 @@ export class Deck extends Emitter {
     else if (m.type === 'fxdone') { this.playing = false; this.emit('change'); }
   }
   /* ---- track ---- */
+  _routeStems() {
+    this.node.disconnect(); this.bands.forEach(b => (Array.isArray(b) ? b : [b]).forEach(x => x.out.disconnect()));
+    if (this.hasStems) this.stemGain.forEach((g, k) => this.node.connect(g, k));
+    else this.bands.forEach((b, k) => (Array.isArray(b) ? b : [b]).forEach(x => { this.node.connect(x.in, 0); x.out.connect(this.stemGain[k]); }));
+  }
   async load(track) {
     this.track = track; this.buffer = track.buffer;
-    const L = this.buffer.getChannelData(0), R = this.buffer.numberOfChannels > 1 ? this.buffer.getChannelData(1) : L;
-    this.node.port.postMessage({ type: 'load', L: L.slice(0), R: R.slice(0) });
-    this.playing = false; this.posFrames = 0; this.cuePoint = 0; this.hotcues = (track.hotcues || Array(8).fill(null)).slice();
+    const chans = b => { const L = b.getChannelData(0); return { L: L.slice(0), R: b.numberOfChannels > 1 ? b.getChannelData(1).slice(0) : L.slice(0) }; };
+    const stems = track.stems ? STEMS.map(n => chans(track.stems[n])) : [chans(this.buffer)];
+    this.hasStems = !!track.stems; this._routeStems(); this.stemOn = [true, true, true, true]; this.stemGain.forEach(g => g.gain.value = 1);
+    const start = this.quantize && track.firstBeat > 0 ? track.firstBeat : 0;
+    this.node.port.postMessage({ type: 'load', stems, pos: start * this.buffer.sampleRate });
+    this.playing = false; this.posFrames = start * this.buffer.sampleRate; this.posAt = this.ctx.currentTime; this.cuePoint = start; this.hotcues = (track.hotcues || Array(8).fill(null)).slice();
     this.loop = { in: -1, out: -1, on: false }; this.roll = null; this.slicer = null;
     this.emit('load'); this.emit('change');
+  }
+  snap(t) { if (!this.quantize || !this.bpm) return t; const b = Math.round(this.beatIndex(t)); return clamp(this.beatTime(Math.max(0, b)), 0, this.duration); }
+  /* ---- stems ---- */
+  setStem(i, on) { this.stemOn[i] = on; this.stemGain[i].gain.setTargetAtTime(on ? 1 : 0, this.ctx.currentTime, 0.01); this.emit('change'); }
+  stemPad(i, pressed) {
+    if (!this.buffer) return;
+    if (i < 4) { if (pressed) this.setStem(i, !this.stemOn[i]); return; }
+    if (i === 4) { if (pressed) { const solo = !(this.stemOn[0] && !this.stemOn[1] && !this.stemOn[2] && !this.stemOn[3]); [true, !solo, !solo, !solo].forEach((v, k) => this.setStem(k, v)); } return; }   // acapella
+    if (i === 5) { if (pressed) { const inst = !(!this.stemOn[0] && this.stemOn[1] && this.stemOn[2] && this.stemOn[3]); [!inst, true, true, true].forEach((v, k) => this.setStem(k, v)); } return; } // instrumental
+    const k = i === 6 ? 0 : 3; const now = this.ctx.currentTime;                                                                                                   // vocal / drums echo throw
+    if (pressed) { this.fx.echo.delayTime.setTargetAtTime(this.beatLen() * 0.75 / this.tempoRate, now, 0.01); this.fx.echoFb.gain.setTargetAtTime(0.6, now, 0.01); this.stemSend[k].gain.setTargetAtTime(1, now, 0.005); this.stemGain[k].gain.setTargetAtTime(0, now, 0.01); }
+    else { this.stemSend[k].gain.setTargetAtTime(0, now, 0.005); this.stemGain[k].gain.setTargetAtTime(this.stemOn[k] ? 1 : 0, now, 0.01); setTimeout(() => this.fx.apply(), 1500); }
   }
   get sr() { return this.buffer ? this.buffer.sampleRate : this.ctx.sampleRate; }
   get duration() { return this.buffer ? this.buffer.duration : 0; }
@@ -88,7 +118,7 @@ export class Deck extends Emitter {
     if (pressed) {
       if (this.playing) { this.pause(); this.seek(this.cuePoint); }
       else {
-        if (Math.abs(this.pos - this.cuePoint) > 0.005) { this.cuePoint = this.pos; this.emit('change'); }
+        if (Math.abs(this.pos - this.cuePoint) > 0.005) { this.cuePoint = this.snap(this.pos); this.seek(this.cuePoint); this.emit('change'); }
         this.previewing = true; this.play();
       }
     } else if (this.previewing) { this.previewing = false; this.pause(); this.seek(this.cuePoint); }
@@ -98,7 +128,7 @@ export class Deck extends Emitter {
     if (!this.buffer) return;
     if (shift) { if (pressed) { this.hotcues[i] = null; this._saveCues(); this.emit('change'); } return; }
     if (!pressed) { if (this._hcPreview === i && !this._hcWasPlaying) { this.pause(); this.seek(this.hotcues[i]); } this._hcPreview = null; return; }
-    if (this.hotcues[i] == null) { this.hotcues[i] = this.pos; this._saveCues(); this.emit('change'); return; }
+    if (this.hotcues[i] == null) { this.hotcues[i] = this.snap(this.pos); this._saveCues(); this.emit('change'); return; }
     this._hcWasPlaying = this.playing; this._hcPreview = i;
     this.seek(this.hotcues[i]); if (!this.playing) this.play();
   }
@@ -133,8 +163,8 @@ export class Deck extends Emitter {
     const b = Math.floor(this.beatIndex()); const a = this.beatTime(b);
     this._setLoop(a, a + beats * this.beatLen(), true);
   }
-  loopIn() { if (this.buffer) this._setLoop(this.pos, -1, false); }
-  loopOut() { if (this.buffer && this.loop.in >= 0 && this.pos > this.loop.in) this._setLoop(this.loop.in, this.pos, true); }
+  loopIn() { if (this.buffer) this._setLoop(this.snap(this.pos), -1, false); }
+  loopOut() { if (this.buffer && this.loop.in >= 0 && this.pos > this.loop.in) { const o = this.snap(this.pos); this._setLoop(this.loop.in, o > this.loop.in ? o : this.pos, true); } }
   reloop() { if (this.loop.in >= 0 && this.loop.out > this.loop.in) { this._setLoop(this.loop.in, this.loop.out, !this.loop.on); if (this.loop.on && this.pos > this.loop.out) this.seek(this.loop.in); } }
   loopHalve() { if (this.loop.out > this.loop.in) { const len = (this.loop.out - this.loop.in) / 2; if (len * this.bpm / 60 >= 1 / 32) this._setLoop(this.loop.in, this.loop.in + len, this.loop.on); } }
   loopDouble() { if (this.loop.out > this.loop.in) this._setLoop(this.loop.in, this.loop.in + (this.loop.out - this.loop.in) * 2, this.loop.on); }
@@ -182,14 +212,6 @@ export class Deck extends Emitter {
       this.fader.gain.cancelScheduledValues(now); this.fader.gain.setValueAtTime(this.fader.gain.value, now); this.fader.gain.linearRampToValueAtTime(0, now + dur);
       setTimeout(() => { this.pause(); this.setKnob('fader', this.knobs.fader); this.fx.echoOutRelease(); }, dur * 1000 + 50);
     } else if (i === 7) { this.setReverse(pressed); }
-  }
-  padScratch(i, pressed) { // canned scratch gestures: baby / chirp / stab
-    if (!pressed || !this.buffer) return;
-    const seq = [[0.15, 3, 0.15, -3], [0.1, 4, 0.1, -4, 0.1, 4], [0.08, 6, 0.12, -2], [0.2, 2, 0.2, -2, 0.1, 4], [0.05, 8], [0.3, -3], [0.1, 2, 0.1, -2, 0.1, 2, 0.1, -2], [0.25, 5, 0.25, -5]][i];
-    this.jogTouch(true); let t = 0;
-    for (let k = 0; k < seq.length; k += 2) { const dur = seq[k], v = seq[k + 1]; const n = Math.round(dur * 50);
-      for (let j = 0; j < n; j++) setTimeout(() => this.node.port.postMessage({ type: 'jogTick', delta: v }), (t + j * 0.02) * 1000); t += dur; }
-    setTimeout(() => this.jogTouch(false), t * 1000 + 30);
   }
   /* ---- sync ---- */
   sync(other) {

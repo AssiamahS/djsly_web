@@ -42,13 +42,13 @@
 <section class="wave-strip">
   <div class="deck-info" id="info0">
     <div class="title">No track</div>
-    <div class="meta"><span class="artist">Load A</span><span class="bpm">--.-</span><span class="time">-00:00.0</span><span class="elapsed">00:00.0</span></div>
+    <div class="meta"><span class="artist">Load A</span><span class="key"></span><span class="bpm">--.-</span><span class="time">-00:00.0</span><span class="elapsed">00:00.0</span></div>
     <canvas class="overview" id="ov0"></canvas>
   </div>
   <div class="scrollwrap"><canvas id="scroll" class="scroll"></canvas></div>
   <div class="deck-info right" id="info1">
     <div class="title">No track</div>
-    <div class="meta"><span class="artist">Load B</span><span class="bpm">--.-</span><span class="time">-00:00.0</span><span class="elapsed">00:00.0</span></div>
+    <div class="meta"><span class="artist">Load B</span><span class="key"></span><span class="bpm">--.-</span><span class="time">-00:00.0</span><span class="elapsed">00:00.0</span></div>
     <canvas class="overview" id="ov1"></canvas>
   </div>
 </section>
@@ -69,10 +69,11 @@
   <!-- ================= DRUMPAD ================= -->
   <section class="view" data-view="pads">
     <div class="pads-head">
-      <h2>Drumpad <small>16 slots · SB3 SAMPLER mode (deck A pads = 1–8, deck B = 9–16)</small></h2>
+      <h2>Drumpad <small>16 slots · SB3 PAD SCRATCH button = Sampler (deck A pads = 1–8, deck B = 9–16)</small></h2>
       <label>Vol <input id="samplerVol" type="range" min="0" max="1" step="0.01" value="0.9"></label>
       <button id="kitReset" class="chip">Reset kit</button>
       <input id="padFile" type="file" accept="audio/*" hidden>
+      <input id="stemFile" type="file" accept="audio/*,.mp3,.wav,.m4a,.flac" multiple hidden>
     </div>
     <div class="drumpad" id="drumpad"></div>
     <p class="hint">Tap to play · long‑press (or right‑click) a pad to load your own sample · keys 1234 / QWER / ASDF / ZXCV</p>
@@ -83,7 +84,7 @@
     <div class="lib-head">
       <h2>Library</h2>
       <button id="addBtn2" class="primary">+ Add tracks</button>
-      <span class="hint">MP3 / M4A / WAV / FLAC from Files, iCloud Drive, or drag &amp; drop. Stored on this device.</span>
+      <span class="hint">MP3 / M4A / WAV / FLAC from Files, iCloud Drive, or drag &amp; drop. Stored on this device. <b>Stems</b>: run <code>tools/make-stems.sh song.mp3</code> on the Mac, then attach the 4 files here.</span>
     </div>
     <div class="lib-list" id="libList"><div class="empty">No tracks yet. Add some.</div></div>
   </section>

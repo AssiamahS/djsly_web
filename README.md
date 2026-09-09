@@ -12,7 +12,11 @@ Static site, no build step, runs on GitHub Pages and on iPhone.
 - Mixer: trim, 3‑band EQ, filter (CFX), channel faders, crossfader, master + limiter, VU meters, headphone cue with **split cue**
   (master in the left ear, cue in the right) since browsers only have one output.
 - FX per deck: echo (beat‑synced), flanger, reverb + depth knob.
-- **Drumpad**: 16 slots = SB3 SAMPLER mode on both decks. Ships with a synthesized kit; long‑press a pad to load your own sample.
+- **Drumpad**: 16 slots = the SB3 **PAD SCRATCH** button on both decks (remapped on purpose). Ships with a synthesized kit; long‑press a pad to load your own sample.
+- **Stems** (SB3 **SAMPLER** button): pads 1–4 = Vocal / Melody / Bass / Drums on‑off, 5 = Acapella, 6 = Instrumental, 7–8 = vocal / drums echo throw.
+  Real stems come from Demucs on the Mac: `tools/make-stems.sh song.mp3` → Library → **Stems** → pick the 4 files. Without them the pads run a 4‑band "lite" split.
+- **Quantize** (Q button, on by default): cue, hot cues and loop in/out snap to the beat grid, and a loaded track sits on its first downbeat, so cue → play always lands on the 1.
+- **Key detection** (Camelot, coloured like Mixed In Key) in the library and deck headers.
 - Library stored on the device (IndexedDB): add MP3/M4A/WAV/FLAC from Files/iCloud/drag‑drop; BPM + beat grid analysed in a worker.
 - Rec button records the master straight to **MP3** (192k, lamejs in-browser; share sheet on iPhone).
 - Colored scrolling waveform + overviews, beat markers, cue/loop/hot‑cue markers.
@@ -25,7 +29,7 @@ Static site, no build step, runs on GitHub Pages and on iPhone.
 (`act / pad / knob / mixer / jog / fx / browse / load`) so the **DDJ‑FLX4** mapping (v2) is one more file in `controllers/`.
 
 ## Not yet
-Slip mode, decks 3/4, key detection, streaming sources (YouTube/Spotify audio can't be routed into Web Audio).
+Slip mode, decks 3/4, photo‑real controller skin (v3), streaming sources (YouTube/Spotify audio can't be routed into Web Audio).
 
 ## Dev
 Any static server: `python3 -m http.server 8811` then open http://127.0.0.1:8811/. Web MIDI needs Chrome/Edge (not Safari).

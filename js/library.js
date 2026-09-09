@@ -9,7 +9,7 @@ function open() {
 }
 const tx = async (mode, fn) => { const db = await open(); return new Promise((res, rej) => { const t = db.transaction(STORE, mode); const req = fn(t.objectStore(STORE)); t.oncomplete = () => res(req?.result); t.onerror = () => rej(t.error); }); };
 export const Library = {
-  async list() { const rows = await tx('readonly', s => s.getAll()); return rows.map(({ blob, ...m }) => m).sort((a, b) => a.added - b.added); },
+  async list() { const rows = await tx('readonly', s => s.getAll()); return rows.map(({ blob, stems, ...m }) => ({ ...m, hasStems: !!stems })).sort((a, b) => a.added - b.added); },
   async get(id) { return tx('readonly', s => s.get(id)); },
   async add(file, meta) {
     const id = `${Date.now().toString(36)}${Math.random().toString(36).slice(2, 7)}`;

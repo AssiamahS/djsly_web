@@ -5,8 +5,8 @@
  */
 export const name = 'DDJ-SB3';
 export const match = /DDJ-SB3/i;
-export const PAD_BASE = { hotcue: 0x00, fxfade: 0x10, padscratch: 0x20, sampler: 0x30, beatjump: 0x40, roll: 0x50, slicer: 0x60, trans: 0x70 };
-const MODE_NOTE = { hotcue: 0x1B, fxfade: 0x1E, padscratch: 0x20, sampler: 0x22, beatjump: 0x69, roll: 0x6B, slicer: 0x6D, trans: 0x6E };
+export const PAD_BASE = { hotcue: 0x00, fxfade: 0x10, sampler: 0x20, stems: 0x30, beatjump: 0x40, roll: 0x50, slicer: 0x60, trans: 0x70 };
+const MODE_NOTE = { hotcue: 0x1B, fxfade: 0x1E, sampler: 0x20, stems: 0x22, beatjump: 0x69, roll: 0x6B, slicer: 0x6D, trans: 0x6E };
 const BTN = { // deck note → [action, shifted]
   0x0B: ['play'], 0x47: ['play', true], 0x0C: ['cue'], 0x48: ['cue', true], 0x58: ['sync'], 0x5C: ['sync', true],
   0x14: ['autoloop'], 0x50: ['reloop'], 0x12: ['loopHalve'], 0x13: ['loopDouble'], 0x61: ['loopIn'], 0x62: ['loopOut'],
@@ -52,7 +52,8 @@ export function create(app, out) {
         for (let p = 0; p < 8; p++) {
           send(ps, PAD_BASE.hotcue + p, dk.hotcues[p] != null ? 0x7F : 0);
           send(ps, PAD_BASE.sampler + p, app.engine.sampler.slots[i * 8 + p]?.buffer ? 0x7F : 0);
-          for (const m of ['fxfade', 'padscratch', 'beatjump', 'roll', 'slicer', 'trans']) send(ps, PAD_BASE[m] + p, 0x7F);
+          send(ps, PAD_BASE.stems + p, p < 4 ? (dk.stemOn[p] ? 0x7F : 0) : 0x7F);
+          for (const m of ['fxfade', 'beatjump', 'roll', 'slicer', 'trans']) send(ps, PAD_BASE[m] + p, 0x7F);
         }
         [0x47, 0x48, 0x49].forEach((nn, k) => send(0x94 + i, nn, dk.fx.on[k] ? 0x7F : 0));
       });

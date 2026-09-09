@@ -1,6 +1,6 @@
 /* djsly analysis worker — BPM + beat-grid phase + waveform peaks, off the UI thread.
  * in : { id, L, R, sampleRate, cols }    (Float32Arrays, transferred)
- * out: { id, bpm, firstBeat (sec), peaks: {overview: Uint8Array(cols*2), bands: Uint8Array(cols*3)}, detail: Float32Array (per 1/100s energy) }
+ * out: { id, bpm, firstBeat (sec, a downbeat), key, camelot, overview, bands, detail }
  */
 self.onmessage = e => {
   const { id, L, R, sampleRate: sr, cols } = e.data;
@@ -88,9 +88,16 @@ self.onmessage = e => {
     for (let t = ph; t < span && c < 400; t += period) { const f = Math.round(start + t); if (f < frames) { s += ons2[f]; c++; } }
     if (s > bestPS) { bestPS = s; bestPh = ph; }
   }
-  // walk the phase back to the first beat of the file
+  // walk the phase back to the first beat of the file, then pick which of the 4 beats is the downbeat:
+  // the "1" carries the most low-frequency onset energy (kick + bass hits) across the track
   let firstFrame = start + bestPh; while (firstFrame - period >= 0) firstFrame -= period;
+  const lowOn = new Float32Array(frames); for (let f = 1; f < frames; f++) { const d = Math.log(1e-6 + lowE[f]) - Math.log(1e-6 + lowE[f - 1]); lowOn[f] = d > 0 ? d : 0; }
+  let bestBar = 0, bestBarS = -1;
+  for (let k = 0; k < 4; k++) { let s = 0; for (let t = firstFrame + k * period; t < frames; t += 4 * period) s += lowOn[Math.round(t)] + 0.5 * ons2[Math.round(t)]; if (s > bestBarS) { bestBarS = s; bestBar = k; } }
+  firstFrame += bestBar * period; while (firstFrame - 4 * period >= 0) firstFrame -= 4 * period;
   const firstBeat = firstFrame * hop / sr;
+  // ---------- key: chroma via FFT + Krumhansl profiles ----------
+  const { key, camelot } = detectKey(L, R, sr);
   // ---------- waveform peaks ----------
   const overview = new Uint8Array(cols * 2); // min,max per column (0..255 around 128)
   const bands = new Uint8Array(cols * 3);
@@ -112,5 +119,29 @@ self.onmessage = e => {
     let lo = 0, mi = 0, hi = 0; for (let f = fa; f < fb && f < frames; f++) { lo = Math.max(lo, lowE[f]); mi = Math.max(mi, midE[f]); hi = Math.max(hi, hiE[f]); }
     detail[i * 3] = Math.min(255, lo * 600); detail[i * 3 + 1] = Math.min(255, mi * 900); detail[i * 3 + 2] = Math.min(255, hi * 1400);
   }
-  self.postMessage({ id, bpm, firstBeat, overview, bands, detail }, [overview.buffer, bands.buffer, detail.buffer]);
+  self.postMessage({ id, bpm, firstBeat, key, camelot, overview, bands, detail }, [overview.buffer, bands.buffer, detail.buffer]);
 };
+
+function fft(re, im) { // in-place radix-2
+  const n = re.length; for (let i = 1, j = 0; i < n; i++) { let bit = n >> 1; for (; j & bit; bit >>= 1) j ^= bit; j ^= bit; if (i < j) { [re[i], re[j]] = [re[j], re[i]]; [im[i], im[j]] = [im[j], im[i]]; } }
+  for (let len = 2; len <= n; len <<= 1) { const ang = -2 * Math.PI / len, wr = Math.cos(ang), wi = Math.sin(ang);
+    for (let i = 0; i < n; i += len) { let cr = 1, ci = 0; for (let j = 0; j < len / 2; j++) { const a = i + j, b = a + len / 2; const tr = re[b] * cr - im[b] * ci, ti = re[b] * ci + im[b] * cr; re[b] = re[a] - tr; im[b] = im[a] - ti; re[a] += tr; im[a] += ti; const nr = cr * wr - ci * wi; ci = cr * wi + ci * wr; cr = nr; } } }
+}
+const NAMES = ['C', 'Db', 'D', 'Eb', 'E', 'F', 'F#', 'G', 'Ab', 'A', 'Bb', 'B'];
+const CAMELOT_MAJ = ['8B', '3B', '10B', '5B', '12B', '7B', '2B', '9B', '4B', '11B', '6B', '1B'];
+const CAMELOT_MIN = ['5A', '12A', '7A', '2A', '9A', '4A', '11A', '6A', '1A', '8A', '3A', '10A'];
+const MAJ = [6.35, 2.23, 3.48, 2.33, 4.38, 4.09, 2.52, 5.19, 2.39, 3.66, 2.29, 2.88], MIN = [6.33, 2.68, 3.52, 5.38, 2.60, 3.53, 2.54, 4.75, 3.98, 2.69, 3.34, 3.17];
+function detectKey(L, R, sr) {
+  const N = 8192, chroma = new Float64Array(12), re = new Float32Array(N), im = new Float32Array(N), win = new Float32Array(N);
+  for (let i = 0; i < N; i++) win[i] = 0.5 - 0.5 * Math.cos(2 * Math.PI * i / N);
+  const n = L.length, step = Math.max(N, Math.floor(n / 160)); // ≤160 frames across the track
+  const binPc = new Int8Array(N / 2); for (let b = 1; b < N / 2; b++) { const f = b * sr / N; binPc[b] = f < 55 || f > 2200 ? -1 : ((Math.round(12 * Math.log2(f / 440)) % 12) + 21) % 12; }
+  for (let s = 0; s + N <= n; s += step) {
+    for (let i = 0; i < N; i++) { re[i] = (L[s + i] + (R ? R[s + i] : L[s + i])) * 0.5 * win[i]; im[i] = 0; }
+    fft(re, im);
+    for (let b = 1; b < N / 2; b++) { const pc = binPc[b]; if (pc >= 0) chroma[pc] += Math.sqrt(re[b] * re[b] + im[b] * im[b]); }
+  }
+  const corr = (p, rot) => { let sx = 0, sy = 0, sxx = 0, syy = 0, sxy = 0; for (let i = 0; i < 12; i++) { const x = chroma[(i + rot) % 12], y = p[i]; sx += x; sy += y; sxx += x * x; syy += y * y; sxy += x * y; } return (12 * sxy - sx * sy) / Math.sqrt((12 * sxx - sx * sx) * (12 * syy - sy * sy) || 1); };
+  let best = { s: -2 }; for (let r = 0; r < 12; r++) { const cM = corr(MAJ, r), cm = corr(MIN, r); if (cM > best.s) best = { s: cM, r, minor: false }; if (cm > best.s) best = { s: cm, r, minor: true }; }
+  return { key: NAMES[best.r] + (best.minor ? 'm' : ''), camelot: best.minor ? CAMELOT_MIN[best.r] : CAMELOT_MAJ[best.r] };
+}
