@@ -13,7 +13,7 @@ export default {
     if (request.method === "OPTIONS") return new Response(null, { status: 204, headers: CORS });
     const upstream = await env.UPSTREAM_KV.get(env.UPSTREAM_KEY ?? "upstream");
     if (url.pathname === "/relay-status") return Response.json({ ok: Boolean(upstream), upstream }, { headers: CORS });
-    if (url.pathname !== "/health" && url.pathname !== "/stems") return Response.json({ error: "not found" }, { status: 404, headers: CORS });
+    if (url.pathname !== "/health" && !url.pathname.startsWith("/stems")) return Response.json({ error: "not found" }, { status: 404, headers: CORS });
     if (!upstream) return Response.json({ error: "Mac stem server is offline (relay has no upstream)" }, { status: 503, headers: CORS });
     const headers = new Headers(request.headers); for (const h of HOP_BY_HOP) headers.delete(h);
     const init: RequestInit = { method: request.method, headers, redirect: "manual" };

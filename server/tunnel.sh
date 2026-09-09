@@ -11,7 +11,8 @@ RELAY="${RELAY:-https://djsly-stems.sylvesterassiamahpm.workers.dev}"
 PROBE_PATH="${PROBE_PATH:-/health}"
 LOG="${TUNNEL_LOG:-$HOME/Library/Logs/djsly-stems-tunnel.log}"
 PROBE_SECS="${PROBE_SECS:-30}"
-MAX_FAILS="${MAX_FAILS:-2}"
+MAX_FAILS="${MAX_FAILS:-6}"          # 6 × 30 s = 3 min of relay failures before recreating
+WARMUP_SECS="${WARMUP_SECS:-240}"    # fresh trycloudflare hostnames can take a couple of minutes to resolve
 RATE_LIMIT_SECS="${RATE_LIMIT_SECS:-600}"
 mkdir -p "$(dirname "$LOG")"
 CF_PID=""
@@ -49,7 +50,9 @@ relay_ok() { local code; code=$(curl -s -o /dev/null -m 20 -w '%{http_code}' "$R
 
 while true; do
   if ! start_tunnel; then sleep 15; continue; fi
-  sleep 10
+  # warm-up: wait for DNS to catch up before judging the tunnel
+  warm=0; until relay_ok || [ "$warm" -ge "$WARMUP_SECS" ]; do sleep 10; warm=$((warm + 10)); done
+  if relay_ok; then echo "$(date -u +%FT%TZ) relay healthy after ${warm}s"; else echo "$(date -u +%FT%TZ) relay still failing after warm-up; keeping tunnel and probing"; fi
   fails=0
   while kill -0 "$CF_PID" 2>/dev/null; do
     if relay_ok; then fails=0
