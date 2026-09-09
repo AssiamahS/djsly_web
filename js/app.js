@@ -382,6 +382,7 @@ async function start() {
     const ms = $('#midiStatus');
     app.on('midi', names => { ms.textContent = names.length ? names.join(', ') : (app.midi.available ? 'no controller' : 'no Web MIDI (use screen)'); ms.classList.toggle('on', names.length > 0); });
     if (!ok) ms.textContent = isIOS ? 'iPhone: touch mode' : 'no Web MIDI';
+    if (window.__djslyNative?.midi && !app.midi.controllers.length) ms.textContent = 'plug in the SB3';
     if (localStorage.getItem('djsly.split') === '1') app.setSplit(true);
     $('#gate').classList.add('hide'); app.render();
     if (!app.lib.length) app.showView('library');
@@ -399,6 +400,10 @@ let recOn = false; $('#rec').onclick = async () => {
   const blob = await app.engine.stopRec(); recOn = false; $('#rec').classList.remove('on'); $('#rec').textContent = '● Rec'; if (!blob) return;
   const ext = blob.type === 'audio/mpeg' ? 'mp3' : blob.type.includes('mp4') ? 'm4a' : 'webm'; const d = new Date(), p = n => String(n).padStart(2, '0');
   const name = `djsly-set-${d.getFullYear()}${p(d.getMonth() + 1)}${p(d.getDate())}-${p(d.getHours())}${p(d.getMinutes())}.${ext}`; const file = new File([blob], name, { type: blob.type });
+  if (window.__djslyNative?.file) { // native app: write into Documents (visible in Files) + share sheet
+    const b64 = await new Promise(res => { const fr = new FileReader(); fr.onload = () => res(fr.result.split(',')[1]); fr.readAsDataURL(blob); });
+    window.webkit.messageHandlers.file.postMessage({ name, b64 }); toast(`Saved ${name} to Files`); return;
+  }
   if (isIOS && navigator.canShare?.({ files: [file] })) { try { await navigator.share({ files: [file], title: name }); return; } catch { } }
   const a = document.createElement('a'); a.href = URL.createObjectURL(blob); a.download = name; a.click(); setTimeout(() => URL.revokeObjectURL(a.href), 5000); toast(`Saved ${name}`);
 };
