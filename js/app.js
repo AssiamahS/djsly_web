@@ -116,7 +116,15 @@ const app = {
       const row = await Library.get(id);
       const r = await fetch(this.stemServer + '/stems', { method: 'POST', headers: { 'X-Filename': row.name + '.' + (row.type.split('/')[1] || 'mp3'), 'Content-Type': 'application/octet-stream' }, body: row.blob });
       if (!r.ok) throw new Error((await r.json().catch(() => ({}))).error || r.status);
-      const j = await r.json(); const stems = {};
+      let job = await r.json();
+      for (let n = 0; job.status !== 'done'; n++) {             // poll; the Mac keeps working even if this tab goes to sleep
+        if (job.status === 'error') throw new Error(job.error || 'separation failed');
+        if (n > 600) throw new Error('timed out');
+        await new Promise(res => setTimeout(res, 3000));
+        job = await (await fetch(`${this.stemServer}/stems/${job.id}`)).json().catch(() => job);
+      }
+      const rr = await fetch(`${this.stemServer}/stems/${job.id}/result`); if (!rr.ok) throw new Error('result ' + rr.status);
+      const j = await rr.json(); const stems = {};
       for (const n of STEMS) { const bin = atob(j[n]); const u8 = new Uint8Array(bin.length); for (let i = 0; i < bin.length; i++) u8[i] = bin.charCodeAt(i); stems[n] = new Blob([u8], { type: 'audio/mpeg' }); }
       await Library.update(id, { stems }); meta.hasStems = true; const t = this.tracks.get(id); if (t) t.stems = null;
       toast(`Stems ready: ${meta.name}`); return true;
