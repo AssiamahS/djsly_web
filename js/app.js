@@ -340,7 +340,7 @@ $('#split').onclick = () => app.setSplit(!app.engine.splitCue);
 let recOn = false; $('#rec').onclick = async () => {
   if (!recOn) { app.engine.startRec(); recOn = true; $('#rec').classList.add('on'); $('#rec').textContent = '■ Stop'; toast('Recording master'); return; }
   const blob = await app.engine.stopRec(); recOn = false; $('#rec').classList.remove('on'); $('#rec').textContent = '● Rec'; if (!blob) return;
-  const ext = blob.type.includes('mp4') ? 'm4a' : 'webm'; const d = new Date(), p = n => String(n).padStart(2, '0');
+  const ext = blob.type === 'audio/mpeg' ? 'mp3' : blob.type.includes('mp4') ? 'm4a' : 'webm'; const d = new Date(), p = n => String(n).padStart(2, '0');
   const name = `djsly-set-${d.getFullYear()}${p(d.getMonth() + 1)}${p(d.getDate())}-${p(d.getHours())}${p(d.getMinutes())}.${ext}`; const file = new File([blob], name, { type: blob.type });
   if (isIOS && navigator.canShare?.({ files: [file] })) { try { await navigator.share({ files: [file], title: name }); return; } catch { } }
   const a = document.createElement('a'); a.href = URL.createObjectURL(blob); a.download = name; a.click(); setTimeout(() => URL.revokeObjectURL(a.href), 5000); toast(`Saved ${name}`);

@@ -366,16 +366,27 @@ export class Engine extends Emitter {
       this.worker.postMessage({ id, L, R, sampleRate: buffer.sampleRate, cols }, R ? [L.buffer, R.buffer] : [L.buffer]);
     });
   }
-  /* recorder */
+  /* recorder — MP3 via lamejs (192k) so the file plays everywhere; MediaRecorder only as a fallback */
   startRec() {
-    const mime = ['audio/webm;codecs=opus', 'audio/mp4', 'audio/webm'].find(m => window.MediaRecorder?.isTypeSupported(m)) || '';
-    this.rec = new MediaRecorder(this.recDest.stream, mime ? { mimeType: mime, audioBitsPerSecond: 192000 } : undefined);
-    this.recChunks = []; this.rec.ondataavailable = e => e.data.size && this.recChunks.push(e.data);
-    this.rec.start(1000); this.recStart = Date.now(); this.emit('rec', true);
+    if (window.lamejs) {
+      const c = this.ctx; const enc = new lamejs.Mp3Encoder(2, c.sampleRate, 192); const parts = [];
+      const sp = c.createScriptProcessor(4096, 2, 1); const l16 = new Int16Array(4096), r16 = new Int16Array(4096);
+      sp.onaudioprocess = ev => {
+        const L = ev.inputBuffer.getChannelData(0), R = ev.inputBuffer.getChannelData(1);
+        for (let i = 0; i < 4096; i++) { l16[i] = Math.max(-32768, Math.min(32767, L[i] * 32767)); r16[i] = Math.max(-32768, Math.min(32767, R[i] * 32767)); }
+        const out = enc.encodeBuffer(l16, r16); if (out.length) parts.push(new Uint8Array(out));
+      };
+      const sink = c.createGain(); sink.gain.value = 0; this.limiter.connect(sp); sp.connect(sink); sink.connect(c.destination);
+      this.rec = { mp3: true, stop: () => { this.limiter.disconnect(sp); sp.disconnect(); sink.disconnect(); const tail = enc.flush(); if (tail.length) parts.push(new Uint8Array(tail)); return new Blob(parts, { type: 'audio/mpeg' }); } };
+    } else {
+      const mime = ['audio/webm;codecs=opus', 'audio/mp4', 'audio/webm'].find(m => window.MediaRecorder?.isTypeSupported(m)) || '';
+      const mr = new MediaRecorder(this.recDest.stream, mime ? { mimeType: mime, audioBitsPerSecond: 192000 } : undefined);
+      const chunks = []; mr.ondataavailable = ev => ev.data.size && chunks.push(ev.data); mr.start(1000);
+      this.rec = { mp3: false, stop: () => new Promise(res => { mr.onstop = () => res(new Blob(chunks, { type: mr.mimeType })); mr.stop(); }) };
+    }
+    this.recStart = Date.now(); this.emit('rec', true);
   }
-  stopRec() {
-    return new Promise(res => { const r = this.rec; if (!r) return res(null); r.onstop = () => { const blob = new Blob(this.recChunks, { type: r.mimeType }); this.rec = null; this.emit('rec', false); res(blob); }; r.stop(); });
-  }
+  async stopRec() { const r = this.rec; if (!r) return null; this.rec = null; const blob = await r.stop(); this.emit('rec', false); return blob; }
 }
 function makeImpulse(c) {
   const dur = 2.2, b = c.createBuffer(2, Math.ceil(c.sampleRate * dur), c.sampleRate);

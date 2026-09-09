@@ -14,7 +14,7 @@ Static site, no build step, runs on GitHub Pages and on iPhone.
 - FX per deck: echo (beat‑synced), flanger, reverb + depth knob.
 - **Drumpad**: 16 slots = SB3 SAMPLER mode on both decks. Ships with a synthesized kit; long‑press a pad to load your own sample.
 - Library stored on the device (IndexedDB): add MP3/M4A/WAV/FLAC from Files/iCloud/drag‑drop; BPM + beat grid analysed in a worker.
-- Rec button records the master to a file (share sheet on iPhone).
+- Rec button records the master straight to **MP3** (192k, lamejs in-browser; share sheet on iPhone).
 - Colored scrolling waveform + overviews, beat markers, cue/loop/hot‑cue markers.
 - Web MIDI: the SB3 is auto‑detected (Chrome/Edge). LEDs light up (play/cue/sync/loop/vinyl/keylock/pad modes/pads).
 - Keyboard: Q/W/E/R = play/cue/sync/loop (deck A), P/O/I/U (deck B), Z–, pads A, 1–8 pads B, Space both, ↑↓ browse, Enter load A, ⇧Enter load B.
