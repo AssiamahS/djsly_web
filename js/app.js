@@ -1,5 +1,5 @@
 /* djsly — UI + glue. The controller mapping and the on-screen skin both talk to the small `app` API below. */
-import { Engine, PAD_MODES, ROLL_SIZES } from './engine.js';
+import { Engine, ROLL_SIZES } from './engine.js';
 import { Library } from './library.js';
 import { Midi } from './midi.js';
 

@@ -1,7 +1,7 @@
 /* djsly audio engine — decks, mixer, sampler, fx, recorder (Web Audio) */
 export const PAD_MODES = ['hotcue', 'fxfade', 'padscratch', 'sampler', 'beatjump', 'roll', 'slicer', 'trans'];
 export const ROLL_SIZES = [1 / 16, 1 / 8, 1 / 4, 1 / 2, 1, 2, 4, 8];
-export const JUMP_SIZES = [1, 2, 4, 8, 16, 32];
+
 const clamp = (v, a, b) => Math.max(a, Math.min(b, v));
 const dB = g => Math.pow(10, g / 20);
 
@@ -233,7 +233,7 @@ export class Deck extends Emitter {
 const eqDb = v => v <= 0.5 ? -26 * (1 - v / 0.5) : 6 * ((v - 0.5) / 0.5);
 
 /* ------------------------------------------------------------------ FX unit (per deck: echo / flanger / reverb) */
-export class FxUnit {
+class FxUnit {
   constructor(engine, deck) {
     const c = engine.ctx; this.ctx = c; this.deck = deck; this.engine = engine;
     this.input = c.createGain(); this.output = c.createGain(); this.dry = c.createGain();
