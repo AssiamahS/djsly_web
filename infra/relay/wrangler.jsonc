@@ -1,0 +1,9 @@
+{
+  "name": "djsly-stems",
+  "main": "src/index.ts",
+  "compatibility_date": "2026-08-01",
+  "workers_dev": true,
+  "observability": { "enabled": true },
+  "kv_namespaces": [{ "binding": "UPSTREAM_KV", "id": "4bfa5370a5a74f45ac84dd63324b6ebe" }],
+  "vars": { "UPSTREAM_KEY": "upstream" }
+}

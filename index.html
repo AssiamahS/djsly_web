@@ -32,6 +32,7 @@
   </nav>
   <div class="status">
     <span id="midiStatus" title="Web MIDI">no controller</span>
+    <span id="stemStatus" class="pill" title="stem server">stems: …</span>
     <button id="split" class="chip" title="Master in left ear, cue in right ear">Split cue</button>
     <button id="rec" class="chip rec">● Rec</button>
     <button id="addBtn" class="chip">+ Tracks</button>
@@ -84,7 +85,7 @@
     <div class="lib-head">
       <h2>Library</h2>
       <button id="addBtn2" class="primary">+ Add tracks</button>
-      <span class="hint">MP3 / M4A / WAV / FLAC from Files, iCloud Drive, or drag &amp; drop. Stored on this device. <b>Stems</b>: run <code>tools/make-stems.sh song.mp3</code> on the Mac, then attach the 4 files here.</span>
+      <span class="hint">MP3 / M4A / WAV / FLAC from Files, iCloud Drive, or drag &amp; drop. Stored on this device. <b>Stems</b> are analysed automatically when the Mac stem server is reachable (<code>server/install.sh</code>); otherwise run <code>tools/make-stems.sh</code> and attach the 4 files.</span>
     </div>
     <div class="lib-list" id="libList"><div class="empty">No tracks yet. Add some.</div></div>
   </section>

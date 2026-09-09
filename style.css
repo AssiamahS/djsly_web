@@ -23,6 +23,8 @@ button:active{transform:translateY(1px)}
 .status{margin-left:auto;display:flex;gap:6px;align-items:center;flex-wrap:wrap;justify-content:flex-end}
 #midiStatus{font-size:11px;color:var(--dim);padding:3px 8px;border:1px dashed var(--line);border-radius:999px}
 #midiStatus.on{color:var(--green);border-style:solid;border-color:var(--green)}
+.pill{font-size:11px;color:var(--dim);padding:3px 8px;border:1px dashed var(--line);border-radius:999px}.pill.on{color:var(--acc);border-style:solid;border-color:var(--acc)}
+.track .nm em.busy{color:var(--dim);animation:blink 1s infinite}
 /* waveform strip */
 .wave-strip{display:grid;grid-template-columns:260px 1fr 260px;grid-template-rows:120px;height:120px;overflow:hidden;background:#05070b;border-bottom:1px solid var(--line)}
 .deck-info{padding:6px 10px;display:flex;flex-direction:column;gap:2px;min-width:0;border-right:1px solid var(--line)}

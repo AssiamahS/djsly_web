@@ -69,7 +69,7 @@ const app = {
     for (const f of files) {
       if (!/audio|mp3|m4a|wav|flac|aac|ogg/i.test(f.type + f.name)) continue;
       const meta = await Library.add(f); this.lib.push(meta); this.renderLib(); toast(`Added ${meta.name}`);
-      this.analyzeTrack(meta.id).catch(e => console.warn(e));
+      this.analyzeTrack(meta.id).then(() => this.autoStems(meta.id)).catch(e => console.warn(e));
     }
   },
   async getBuffer(id) {
@@ -98,7 +98,33 @@ const app = {
     await dk.load({ ...meta, bpm: an.bpm, firstBeat: an.firstBeat, key: an.key, camelot: an.camelot, buffer: t.buffer, stems });
     this.renderInfo(d); this.render(); toast(`${d ? 'B' : 'A'}: ${meta.name} · ${an.bpm} BPM`);
   },
+  /* ---- stem server (Mac running server/stems_server.py; reachable direct, on the LAN, or through the relay) ---- */
+  stemServer: null, stemJobs: new Set(),
+  async findStemServer() {
+    const cands = [localStorage.getItem('djsly.stemServer'), location.origin, 'http://127.0.0.1:8813', 'https://djsly-stems.sylvesterassiamahpm.workers.dev'].filter(Boolean);
+    for (const u of [...new Set(cands)]) {
+      try { const r = await fetch(u + '/health', { signal: AbortSignal.timeout(2500) }); const j = await r.json(); if (j.server === 'djsly-stems') { this.stemServer = u; break; } } catch { }
+    }
+    const s = $('#stemStatus'); if (s) { s.textContent = this.stemServer ? 'stems: auto' : 'stems: manual'; s.classList.toggle('on', !!this.stemServer); s.title = this.stemServer || 'No stem server reachable — run server/install.sh on the Mac'; }
+    return this.stemServer;
+  },
+  async autoStems(id) {
+    if (!this.stemServer || this.stemJobs.has(id)) return false;
+    const meta = this.lib.find(x => x.id === id); if (!meta || meta.hasStems) return false;
+    this.stemJobs.add(id); meta.stemming = true; this.renderLib();
+    try {
+      const row = await Library.get(id);
+      const r = await fetch(this.stemServer + '/stems', { method: 'POST', headers: { 'X-Filename': row.name + '.' + (row.type.split('/')[1] || 'mp3'), 'Content-Type': 'application/octet-stream' }, body: row.blob });
+      if (!r.ok) throw new Error((await r.json().catch(() => ({}))).error || r.status);
+      const j = await r.json(); const stems = {};
+      for (const n of STEMS) { const bin = atob(j[n]); const u8 = new Uint8Array(bin.length); for (let i = 0; i < bin.length; i++) u8[i] = bin.charCodeAt(i); stems[n] = new Blob([u8], { type: 'audio/mpeg' }); }
+      await Library.update(id, { stems }); meta.hasStems = true; const t = this.tracks.get(id); if (t) t.stems = null;
+      toast(`Stems ready: ${meta.name}`); return true;
+    } catch (e) { console.warn('stems', e); toast(`Stems failed: ${e.message}`); return false; }
+    finally { this.stemJobs.delete(id); meta.stemming = false; this.renderLib(); }
+  },
   importStems(id) {
+    if (this.stemServer) return this.autoStems(id);
     const inp = $('#stemFile');
     inp.onchange = async () => {
       const files = [...inp.files]; inp.value = ''; const got = {};
@@ -149,7 +175,7 @@ const app = {
     if (!this.lib.length) { list.append(el('div', 'empty', 'No tracks yet. Tap “+ Add tracks”.')); return; }
     this.lib.forEach((t, i) => {
       const row = el('div', 'track' + (i === this.sel ? ' sel' : ''));
-      row.innerHTML = `<div class="nm">${t.title || t.name}<small>${t.artist || ''}${t.hasStems ? ' · <em>STEMS</em>' : ''}</small></div><span class="key" data-c="${t.camelot || ''}" title="${t.key || ''}">${t.camelot || ''}</span><div class="bpm">${t.bpm ? t.bpm.toFixed(1) : '…'}</div><div class="dur">${t.duration ? fmtT(t.duration) : ''}</div>`;
+      row.innerHTML = `<div class="nm">${t.title || t.name}<small>${t.artist || ''}${t.hasStems ? ' · <em>STEMS</em>' : t.stemming ? ' · <em class="busy">STEMS…</em>' : ''}</small></div><span class="key" data-c="${t.camelot || ''}" title="${t.key || ''}">${t.camelot || ''}</span><div class="bpm">${t.bpm ? t.bpm.toFixed(1) : '…'}</div><div class="dur">${t.duration ? fmtT(t.duration) : ''}</div>`;
       const a = el('button', 'btn', 'A'), b = el('button', 'btn blue', 'B'), st = el('button', 'btn tiny' + (t.hasStems ? ' on' : ''), 'Stems'), x = el('button', 'del', '✕');
       st.onclick = e => { e.stopPropagation(); this.importStems(t.id); };
       a.onclick = e => { e.stopPropagation(); this.loadToDeck(0, t.id); }; b.onclick = e => { e.stopPropagation(); this.loadToDeck(1, t.id); };
@@ -342,6 +368,7 @@ async function start() {
     app.engine.on('savecues', (id, hc) => Library.update(id, { hotcues: hc }));
     buildDeck(0); buildDeck(1); buildMixer(); buildDrumpad();
     app.lib = await Library.list(); app.renderLib();
+    app.findStemServer().then(ok => { if (ok) app.lib.filter(t => !t.hasStems && t.bpm).forEach(t => app.autoStems(t.id)); });
     app.midi = new Midi(app); const ok = await app.midi.init();
     const ms = $('#midiStatus');
     app.on('midi', names => { ms.textContent = names.length ? names.join(', ') : (app.midi.available ? 'no controller' : 'no Web MIDI (use screen)'); ms.classList.toggle('on', names.length > 0); });
