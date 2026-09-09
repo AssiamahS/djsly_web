@@ -103,9 +103,9 @@ const app = {
   async findStemServer() {
     const cands = [localStorage.getItem('djsly.stemServer'), location.origin, 'http://127.0.0.1:8813', 'https://djsly-stems.sylvesterassiamahpm.workers.dev'].filter(Boolean);
     for (const u of [...new Set(cands)]) {
-      try { const r = await fetch(u + '/health', { signal: AbortSignal.timeout(2500) }); const j = await r.json(); if (j.server === 'djsly-stems') { this.stemServer = u; break; } } catch { }
+      try { const r = await fetch(u + '/health', { signal: AbortSignal.timeout(8000) }); const j = await r.json(); if (j.server === 'djsly-stems') { this.stemServer = u; this.stemAgent = j.agent || 'online'; break; } } catch { }
     }
-    const s = $('#stemStatus'); if (s) { s.textContent = this.stemServer ? 'stems: auto' : 'stems: manual'; s.classList.toggle('on', !!this.stemServer); s.title = this.stemServer || 'No stem server reachable — run server/install.sh on the Mac'; }
+    const s = $('#stemStatus'); if (s) { s.textContent = this.stemServer ? (this.stemAgent === 'offline' ? 'stems: mac offline' : 'stems: auto') : 'stems: manual'; s.classList.toggle('on', !!this.stemServer); s.title = this.stemServer || 'No stem server reachable — run server/install.sh on the Mac'; }
     return this.stemServer;
   },
   async autoStems(id) {
@@ -114,18 +114,19 @@ const app = {
     this.stemJobs.add(id); meta.stemming = true; this.renderLib();
     try {
       const row = await Library.get(id);
-      const r = await fetch(this.stemServer + '/stems', { method: 'POST', headers: { 'X-Filename': row.name + '.' + (row.type.split('/')[1] || 'mp3'), 'Content-Type': 'application/octet-stream' }, body: row.blob });
+      const bytes = await row.blob.arrayBuffer();
+      const hash = [...new Uint8Array(await crypto.subtle.digest('SHA-1', bytes))].map(b => b.toString(16).padStart(2, '0')).join('');
+      const r = await fetch(this.stemServer + '/stems', { method: 'POST', headers: { 'X-Filename': row.name + '.' + (row.type.split('/')[1] || 'mp3'), 'X-Hash': hash, 'Content-Type': 'application/octet-stream' }, body: bytes });
       if (!r.ok) throw new Error((await r.json().catch(() => ({}))).error || r.status);
       let job = await r.json();
       for (let n = 0; job.status !== 'done'; n++) {             // poll; the Mac keeps working even if this tab goes to sleep
         if (job.status === 'error') throw new Error(job.error || 'separation failed');
         if (n > 600) throw new Error('timed out');
         await new Promise(res => setTimeout(res, 3000));
-        job = await (await fetch(`${this.stemServer}/stems/${job.id}`)).json().catch(() => job);
+        job = await fetch(`${this.stemServer}/stems/${job.id}`).then(x => x.json()).catch(() => job);
       }
-      const rr = await fetch(`${this.stemServer}/stems/${job.id}/result`); if (!rr.ok) throw new Error('result ' + rr.status);
-      const j = await rr.json(); const stems = {};
-      for (const n of STEMS) { const bin = atob(j[n]); const u8 = new Uint8Array(bin.length); for (let i = 0; i < bin.length; i++) u8[i] = bin.charCodeAt(i); stems[n] = new Blob([u8], { type: 'audio/mpeg' }); }
+      const stems = {};
+      for (const n of STEMS) { const rr = await fetch(`${this.stemServer}/stems/${job.id}/${n}`); if (!rr.ok) throw new Error(`${n} ${rr.status}`); stems[n] = new Blob([await rr.arrayBuffer()], { type: 'audio/mpeg' }); }
       await Library.update(id, { stems }); meta.hasStems = true; const t = this.tracks.get(id); if (t) t.stems = null;
       toast(`Stems ready: ${meta.name}`); return true;
     } catch (e) { console.warn('stems', e); toast(`Stems failed: ${e.message}`); return false; }

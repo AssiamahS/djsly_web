@@ -4,13 +4,15 @@
   GET  /health          → {"ok":true,"model":"htdemucs","busy":n}
   POST /stems           body = audio file bytes, header X-Filename → {"id":sha1,"status":"queued|working|done"}
   GET  /stems/<id>      → {"id","status","error?"}           (poll every few seconds; the job keeps running if the phone leaves)
-  GET  /stems/<id>/result → {"vocals":b64,"other":b64,"bass":b64,"drums":b64}   (409 until done)
-Jobs are async so no single HTTP call outlives Cloudflare's 100 s edge timeout on the iPhone path.
+  GET  /stems/<id>/<stem> → the mp3 (vocals|other|bass|drums), 404 until done
+Also runs the CLOUD AGENT: polls the djsly-stems Worker (KV job queue) for tracks the iPhone dropped there,
+separates them and uploads the stems. That needs no tunnel, so it works on networks that block everything but 443.
+Token in ~/.djsly-stems-token (same value as the Worker's AGENT_TOKEN secret).
   GET  /<static>        serves the djsly web app itself (so a phone on the same Wi-Fi can use http://<mac-ip>:8813/)
 
 Results are cached by content hash in ~/djsly-stems/cache/<sha1>/ so a track is only split once.
 """
-import base64, hashlib, json, os, shutil, subprocess, sys, tempfile, threading
+import hashlib, json, os, shutil, subprocess, sys, tempfile, threading, time, urllib.request, urllib.error
 from http.server import ThreadingHTTPServer, SimpleHTTPRequestHandler
 
 PORT = int(os.environ.get("DJSLY_STEMS_PORT", "8813"))
@@ -18,6 +20,8 @@ MODEL = os.environ.get("DJSLY_STEMS_MODEL", "htdemucs")
 CACHE = os.path.expanduser(os.environ.get("DJSLY_STEMS_DIR", "~/djsly-stems")) + "/cache"
 WEB = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 DEMUCS = shutil.which("demucs") or "/opt/homebrew/bin/demucs"
+CLOUD = os.environ.get("DJSLY_CLOUD_URL", "https://djsly-stems.sylvesterassiamahpm.workers.dev")
+TOKEN_FILE = os.path.expanduser("~/.djsly-stems-token")
 STEMS = ["vocals", "other", "bass", "drums"]
 lock = threading.Lock()   # demucs eats every core; one job at a time
 jobs = {}                 # sha1 → {"status": queued|working|done|error, "error": str}
@@ -56,11 +60,37 @@ def status(h):
     if done_on_disk(h): return {"id": h, "status": "done"}
     with jobs_lock: return {"id": h, **jobs.get(h, {"status": "unknown"})}
 
-def result(h):
-    res = {}
-    for s in STEMS:
-        with open(os.path.join(CACHE, h, s + ".mp3"), "rb") as f: res[s] = base64.b64encode(f.read()).decode()
-    return res
+def stem_path(h, s): return os.path.join(CACHE, h, s + ".mp3")
+
+# ---------------- cloud agent ----------------
+def cloud_agent():
+    token = open(TOKEN_FILE).read().strip() if os.path.exists(TOKEN_FILE) else ""
+    if not token: print("cloud agent: no token at " + TOKEN_FILE + " — iPhone-from-anywhere disabled", flush=True); return
+    def call(method, path, data=None, timeout=120):
+        req = urllib.request.Request(CLOUD + path, data=data, method=method, headers={"Authorization": "Bearer " + token, "Content-Type": "application/octet-stream", "User-Agent": "djsly-stems-agent/1 (mac)"})
+        with urllib.request.urlopen(req, timeout=timeout) as r: return r.read()
+    print("cloud agent: polling " + CLOUD, flush=True)
+    last_ping = 0
+    while True:
+        try:
+            if time.time() - last_ping > 240: call("POST", "/agent/ping", b""); last_ping = time.time()
+            job = json.loads(call("GET", "/agent/next"))
+            if not job.get("id"): time.sleep(5); continue
+            h, name = job["id"], job.get("name", "track.mp3")
+            print("cloud job " + h[:8] + " " + name, flush=True)
+            if not done_on_disk(h):
+                data = call("GET", "/agent/in/" + h, timeout=300)
+                if hashlib.sha1(data).hexdigest() != h: raise RuntimeError("hash mismatch")
+                with jobs_lock: jobs[h] = {"status": "queued"}
+                run_job(h, data, name)
+                with jobs_lock: st = jobs.get(h, {})
+                if st.get("status") == "error": call("POST", "/agent/done/" + h, json.dumps({"error": st.get("error")}).encode()); continue
+            for s in STEMS:
+                with open(stem_path(h, s), "rb") as f: call("PUT", "/agent/out/" + h + "/" + s, f.read(), timeout=300)
+            call("POST", "/agent/done/" + h, b"{}")
+            print("cloud job " + h[:8] + " done", flush=True)
+        except Exception as e:
+            print("cloud agent: " + str(e), flush=True); time.sleep(15)
 
 def busy_count():
     with jobs_lock: return sum(1 for j in jobs.values() if j["status"] in ("queued", "working"))
@@ -86,7 +116,13 @@ class H(SimpleHTTPRequestHandler):
         parts = self.path.strip("/").split("/")
         if parts[0] == "stems" and len(parts) >= 2 and len(parts[1]) == 40:
             if len(parts) == 2: return self._json(200, status(parts[1]))
-            if parts[2] == "result": return self._json(200, result(parts[1])) if done_on_disk(parts[1]) else self._json(409, status(parts[1]))
+            if parts[2] in STEMS:
+                if not done_on_disk(parts[1]): return self._json(404, status(parts[1]))
+                with open(stem_path(parts[1], parts[2]), "rb") as f: body = f.read()
+                self.send_response(200); self.send_header("Content-Type", "audio/mpeg"); self.send_header("Content-Length", str(len(body))); self.end_headers()
+                try: self.wfile.write(body)
+                except (BrokenPipeError, ConnectionResetError): pass
+                return
         return super().do_GET()
     def do_POST(self):
         if self.path != "/stems": return self._json(404, {"error": "not found"})
@@ -98,5 +134,6 @@ class H(SimpleHTTPRequestHandler):
 
 if __name__ == "__main__":
     os.makedirs(CACHE, exist_ok=True)
+    threading.Thread(target=cloud_agent, daemon=True).start()
     print(f"djsly stem server on http://0.0.0.0:{PORT}  model={MODEL}  app={WEB}", flush=True)
     ThreadingHTTPServer(("0.0.0.0", PORT), H).serve_forever()

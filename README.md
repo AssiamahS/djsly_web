@@ -16,8 +16,9 @@ Static site, no build step, runs on GitHub Pages and on iPhone.
 - **Stems** (SB3 **SAMPLER** button): pads 1–4 = Vocal / Melody / Bass / Drums on‑off, 5 = Acapella, 6 = Instrumental, 7–8 = vocal / drums echo throw.
   Stems are **analysed automatically on import**, rekordbox‑style: the Mac runs a small Demucs server (`server/install.sh`, launchd,
   port 8813) and the app uploads each new track to it and stores the four stems on the device. The iPhone uses the same server:
-  on home Wi‑Fi open `http://<mac-ip>:8813/`, anywhere else the GitHub Pages app reaches the Mac through the
-  `djsly-stems` Cloudflare Worker relay (quick tunnel supervised by `server/tunnel.sh`). Without any server the pads run a 4‑band "lite" split
+  on home Wi‑Fi open `http://<mac-ip>:8813/`, anywhere else the app drops the track into the `djsly-stems` Cloudflare Worker
+  (a KV job queue, `infra/relay`) and the Mac server picks it up over plain HTTPS, so it works even on networks that block tunnels.
+  Token: `~/.djsly-stems-token` on the Mac = the Worker's `AGENT_TOKEN` secret. Without any server the pads run a 4‑band "lite" split
   and `tools/make-stems.sh` + the Stems button attach files by hand.
 - **Quantize** (Q button, on by default): cue, hot cues and loop in/out snap to the beat grid, and a loaded track sits on its first downbeat, so cue → play always lands on the 1.
 - **Key detection** (Camelot, coloured like Mixed In Key) in the library and deck headers.
