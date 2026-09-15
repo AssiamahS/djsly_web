@@ -13,6 +13,16 @@ class Emitter {
 }
 
 /* ------------------------------------------------------------------ Deck */
+const KEY_NAMES = ['C', 'Db', 'D', 'Eb', 'E', 'F', 'F#', 'G', 'Ab', 'A', 'Bb', 'B'];
+export function shiftCamelot(c, semis) { // +1 semitone = +7 on the Camelot wheel, letter (mode) unchanged
+  if (!c || !semis) return c || ''; const n = parseInt(c, 10), l = c.slice(-1); if (!n) return c;
+  return ((((n - 1 + semis * 7) % 12) + 12) % 12 + 1) + l;
+}
+export function shiftKeyName(k, semis) {
+  if (!k || !semis) return k || ''; const m = /^([A-G][b#]?)(m?)$/.exec(k); if (!m) return k;
+  const i = KEY_NAMES.indexOf(m[1]); if (i < 0) return k; return KEY_NAMES[(((i + semis) % 12) + 12) % 12] + m[2];
+}
+
 export class Deck extends Emitter {
   constructor(engine, index) {
     super();
@@ -99,6 +109,10 @@ export class Deck extends Emitter {
   get bpm() { return this.track?.bpm || 0; }
   get effBpm() { return this.bpm * this.tempoRate; }
   get tempoRate() { return 1 + this.tempoSlider * this.tempoRange; }
+  get pitchPct() { return (this.tempoRate - 1) * 100; }           // Serato/rekordbox style ±% readout
+  get semitoneShift() { return this.keylock ? 0 : Math.round(12 * Math.log2(this.tempoRate)); } // key drifts with pitch unless keylock
+  get effCamelot() { return shiftCamelot(this.track?.camelot, this.semitoneShift); }
+  get effKey() { return shiftKeyName(this.track?.key, this.semitoneShift); }
   get pos() { // seconds, extrapolated between worklet reports
     if (!this.buffer) return 0;
     const dt = this.playing || this.jogTouched ? this.ctx.currentTime - this.posAt : 0;
@@ -124,6 +138,14 @@ export class Deck extends Emitter {
     } else if (this.previewing) { this.previewing = false; this.pause(); this.seek(this.cuePoint); }
   }
   shiftCue() { this.seek(0); if (this.playing) this.play(); }
+  setCuePoint() { if (!this.buffer) return; this.cuePoint = this.snap(this.pos); this.emit('change'); }
+  jumpCue() { if (!this.buffer) return; this.seek(this.cuePoint); if (!this.playing) this.play(); }
+  censor(pressed) { // hold = play backwards, release = drop back in where the track would have been (slip)
+    if (!this.buffer || !this.playing) return;
+    if (pressed) { this._cz = { pos: this.pos, at: this.ctx.currentTime }; this.setReverse(true); }
+    else { this.setReverse(false); if (this._cz) { this.seek(this._cz.pos + (this.ctx.currentTime - this._cz.at) * this.tempoRate); this._cz = null; } }
+  }
+  nudgeTempo(deltaRate) { this.setTempo(this.tempoSlider + deltaRate / this.tempoRange); }
   hotcue(i, pressed, shift) {
     if (!this.buffer) return;
     if (shift) { if (pressed) { this.hotcues[i] = null; this._saveCues(); this.emit('change'); } return; }
@@ -151,6 +173,7 @@ export class Deck extends Emitter {
     else this.seek(this.pos + delta * (shift ? 0.25 : 0.01));
   }
   bend(v) { this.node.port.postMessage({ type: 'bend', value: v }); }
+  bendHold(v) { this.node.port.postMessage({ type: 'bendHold', value: v }); }
   /* ---- loops ---- */
   _setLoop(inSec, outSec, on) {
     this.loop = { in: inSec, out: outSec, on };

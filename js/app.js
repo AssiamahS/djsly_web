@@ -5,6 +5,7 @@ import { Midi } from './midi.js';
 
 const $ = (s, r = document) => r.querySelector(s); const $$ = (s, r = document) => [...r.querySelectorAll(s)];
 const el = (tag, cls, html) => { const e = document.createElement(tag); if (cls) e.className = cls; if (html != null) e.innerHTML = html; return e; };
+const fmtPct = p => `${p > 0 ? '+' : p < 0 ? '−' : ''}${Math.abs(p).toFixed(2)}%`;
 const fmtT = t => { const s = Math.abs(t); const m = Math.floor(s / 60), r = s - m * 60; return `${t < 0 ? '-' : ''}${String(m).padStart(2, '0')}:${r.toFixed(1).padStart(4, '0')}`; };
 let toastT; const toast = m => { const t = $('.toast'); t.textContent = m; t.classList.add('show'); clearTimeout(toastT); toastT = setTimeout(() => t.classList.remove('show'), 1800); };
 const isIOS = /iP(hone|ad|od)/.test(navigator.userAgent) || (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1);
@@ -34,6 +35,19 @@ const app = {
       case 'deckSelect': if (pressed) toast('Decks 3/4 are not in v1'); break;
       case 'masterCue': if (pressed) this.setSplit(!this.engine.splitCue); break;
       case 'quantize': if (pressed) { dk.quantize = !dk.quantize; toast(`Quantize ${dk.quantize ? 'on' : 'off'}`); } break;
+      /* Serato-keyboard actions */
+      case 'reverse': if (pressed) dk.setReverse(!dk.reverse); break;
+      case 'pitchDown': if (pressed) dk.nudgeTempo(shift ? -0.01 : -0.0025); break;   // 0.25% per tap, 1% with shift
+      case 'pitchUp': if (pressed) dk.nudgeTempo(shift ? 0.01 : 0.0025); break;
+      case 'bendDown': dk.bendHold(pressed ? -0.04 : 0); break;                       // hold = temporary -4% (like a jog nudge)
+      case 'bendUp': dk.bendHold(pressed ? 0.04 : 0); break;
+      case 'censor': dk.censor(pressed); break;
+      case 'jumpCue': if (pressed) dk.jumpCue(); break;
+      case 'loopToggle': if (pressed) dk.reloop(); break;
+      case 'setCue': if (pressed) { dk.setCuePoint(); toast(`${d ? 'B' : 'A'}: cue set ${fmtT(dk.cuePoint)}`); } break;
+      case 'prevTrack': if (pressed) this.browse(-1, true); break;
+      case 'nextTrack': if (pressed) this.browse(1, true); break;
+      case 'rwd': case 'ff': { clearInterval(dk._scan); dk._scan = null; if (pressed && dk.buffer) { const dir = action === 'ff' ? 1 : -1; dk.seek(dk.pos + dir * 0.5); dk._scan = setInterval(() => dk.seek(dk.pos + dir * 0.5), 60); } break; }
     }
     this.render();
   },
@@ -154,6 +168,7 @@ const app = {
       const b = this.btn[d]; const set = (k, on) => b[k]?.classList.toggle('on', !!on);
       set('play', dk.playing); set('cue', dk.buffer && !dk.playing); set('quantize', dk.quantize); set('sync', dk.synced); set('autoloop', dk.loop.on); set('vinyl', dk.vinyl); set('keylock', dk.keylock); set('headCue', dk.cueOn); set('shift', this.shift);
       b.tempoRange && (b.tempoRange.textContent = `±${Math.round(dk.tempoRange * 100)}%`);
+      b.tempoLabel && (b.tempoLabel.textContent = `Tempo ${fmtPct(dk.pitchPct)}`);
       $$('.padmodes .btn', this.deckEl[d]).forEach(x => x.classList.toggle('on', x.dataset.mode === dk.padMode));
       this.padDom[d].forEach((p, i) => {
         const m = dk.padMode; let label = '', lit = false, sub = '';
@@ -177,7 +192,8 @@ const app = {
     const dk = this.engine.decks[d], info = $(`#info${d}`);
     $('.title', info).textContent = dk.track ? (dk.track.title || dk.track.name) : 'No track';
     $('.artist', info).textContent = dk.track ? (dk.track.artist || '') : (d ? 'Load B' : 'Load A');
-    const k = $('.key', info); k.textContent = dk.track?.camelot || ''; k.dataset.c = dk.track?.camelot || ''; k.title = dk.track?.key || '';
+    const k = $('.key', info); k.textContent = dk.effCamelot; k.dataset.c = dk.effCamelot; k.title = dk.effKey; dk._keyShown = dk.effCamelot;
+    $('.bpm', info).title = dk.bpm ? `original ${dk.bpm.toFixed(1)} BPM` : '';
   },
   renderLib() {
     const list = $('#libList'); list.innerHTML = '';
@@ -257,7 +273,7 @@ function buildDeck(d) {
   tr.append(shiftB, B('cue', 'Cue', 'round orange'), B('play', '▶ ❚❚', 'big green'));
   const jw = el('div', 'jogwrap'); const j = el('div', 'jog'); j.innerHTML = '<div class="platter"></div><div class="lbl">SEARCH</div>'; jw.append(j); jog(j, d); app.jogDom[d] = j;
   const tw = el('div', 'tempowrap'); const tf = el('div', 'fader tall'); fader(tf, () => (dk.tempoSlider + 1) / 2 * -1 + 1, v => dk.setTempo((1 - v) * 2 - 1)); // top = slower, matching hardware print
-  const tl = el('div', 'klabel', 'Tempo'); const tRange = el('button', 'btn tiny', '±8%'); hold(tRange, on => app.act(d, 'tempoRange', on)); app.btn[d].tempoRange = tRange;
+  const tl = el('div', 'klabel', 'Tempo 0.00%'); app.btn[d].tempoLabel = tl; const tRange = el('button', 'btn tiny', '±8%'); hold(tRange, on => app.act(d, 'tempoRange', on)); app.btn[d].tempoRange = tRange;
   tw.append(B('vinyl', 'Vinyl', 'tiny'), tf, tl, tRange, B('headCue', '🎧 Cue', 'tiny blue'));
   const ps = el('div', 'padsec'); const modes = el('div', 'padmodes');
   [['hotcue', 'Hot cue', 'beat jump'], ['fxfade', 'FX fade', 'roll'], ['sampler', 'Sampler', 'slicer'], ['stems', 'Stems', 'trans']].forEach(([m, l, s]) => {
@@ -332,6 +348,8 @@ function drawFrame() {
     // time / bpm readouts
     const info = $(`#info${d}`); $('.time', info).textContent = dk.buffer ? fmtT(-dk.remaining) : '-00:00.0'; $('.elapsed', info).textContent = dk.buffer ? fmtT(pos) : '00:00.0';
     $('.bpm', info).textContent = dk.bpm ? dk.effBpm.toFixed(1) : '--.-';
+    const pe = $('.pitch', info); const pt = dk.buffer ? fmtPct(dk.pitchPct) : ''; if (pe.textContent !== pt) { pe.textContent = pt; pe.classList.toggle('off', Math.abs(dk.pitchPct) > 0.005); }
+    if (dk.buffer && dk._keyShown !== dk.effCamelot) { const k = $('.key', info); k.textContent = dk.effCamelot; k.dataset.c = dk.effCamelot; k.title = dk.effKey + (dk.semitoneShift ? ` (was ${dk.track?.key}, pitch ${dk.semitoneShift > 0 ? '+' : ''}${dk.semitoneShift} st)` : ''); dk._keyShown = dk.effCamelot; }
     // overview
     const o = fitCanvas(ov[d]); o.g.setTransform(o.dpr, 0, 0, o.dpr, 0, 0); o.g.fillStyle = '#0e1219'; o.g.fillRect(0, 0, o.w, o.h);
     if (app.ovCache[d] && dk.buffer) { o.g.drawImage(app.ovCache[d], 0, 0, o.w, o.h); const x = pos / dk.duration * o.w; o.g.fillStyle = 'rgba(0,0,0,.45)'; o.g.fillRect(0, 0, x, o.h); o.g.fillStyle = '#fff'; o.g.fillRect(x - 1, 0, 2, o.h);
@@ -345,29 +363,49 @@ function drawFrame() {
 ov.forEach((c, d) => c.addEventListener('pointerdown', e => { const dk = app.engine?.decks[d]; if (!dk?.buffer) return; const r = c.getBoundingClientRect(); dk.seek((e.clientX - r.left) / r.width * dk.duration); }));
 (function loop() { try { drawFrame(); } catch (e) { console.error(e); } requestAnimationFrame(loop); })();
 
-/* ================================================================== keyboard */
-const KEYS = { KeyQ: [0, 'play'], KeyW: [0, 'cue'], KeyE: [0, 'sync'], KeyR: [0, 'autoloop'], KeyT: [0, 'loopIn'], KeyY: [0, 'loopOut'], KeyP: [1, 'play'], KeyO: [1, 'cue'], KeyI: [1, 'sync'], KeyU: [1, 'autoloop'], BracketLeft: [1, 'loopIn'], BracketRight: [1, 'loopOut'] };
-const PADS_A = ['KeyZ', 'KeyX', 'KeyC', 'KeyV', 'KeyB', 'KeyN', 'KeyM', 'Comma'], PADS_B = ['Digit1', 'Digit2', 'Digit3', 'Digit4', 'Digit5', 'Digit6', 'Digit7', 'Digit8'];
+/* ================================================================== keyboard — Serato DJ default layout (see keys.png / press ?) */
+// [deck, action, shift-action]. Left deck = Q row, right deck = A row, like Serato.
+const KEYS = {
+  KeyQ: [0, 'reverse', 'prevTrack'], KeyW: [0, 'play', 'nextTrack'], KeyE: [0, 'pitchDown', 'rwd'], KeyR: [0, 'pitchUp', 'ff'], KeyT: [0, 'bendDown'], KeyY: [0, 'bendUp'],
+  KeyU: [0, 'censor'], KeyI: [0, 'jumpCue'], KeyO: [0, 'loopIn'], KeyP: [0, 'loopOut'], BracketLeft: [0, 'loopToggle'],
+  KeyA: [1, 'reverse', 'prevTrack'], KeyS: [1, 'play', 'nextTrack'], KeyD: [1, 'pitchDown', 'rwd'], KeyF: [1, 'pitchUp', 'ff'], KeyG: [1, 'bendDown'], KeyH: [1, 'bendUp'],
+  KeyJ: [1, 'censor'], KeyK: [1, 'jumpCue'], KeyL: [1, 'loopIn'], Semicolon: [1, 'loopOut'], Quote: [1, 'loopToggle'],
+  Comma: [0, 'setCue'], Period: [1, 'setCue'], F5: [0, 'keylock'], F10: [1, 'keylock'],
+};
+const CUES_A = ['Digit1', 'Digit2', 'Digit3', 'Digit4', 'Digit5'], CUES_B = ['Digit6', 'Digit7', 'Digit8', 'Digit9', 'Digit0']; // 1-5 = deck A hot cues, 6-0 = deck B
+const SAMPS = ['KeyZ', 'KeyX', 'KeyC', 'KeyV', 'KeyB', 'KeyN'];                                                            // Z–N = sampler 1-6
 const DRUM = '1234qwerasdfzxcv';
-const held = new Set();
+const held = new Map();
+const hotcueKey = (d, i, e) => { const dk = app.engine.decks[d]; if (!dk.buffer) return; if (e.altKey) { dk.hotcues[i] = null; dk._saveCues(); app.render(); } else if (e.shiftKey) { dk.hotcues[i] = dk.snap(dk.pos); dk._saveCues(); app.render(); } else app.pad(d, i, true, 1, false, 'hotcue'); };
 window.addEventListener('keydown', e => {
-  if (!app.engine?.ready || e.target.tagName === 'INPUT' || e.repeat) return;
+  if (!app.engine?.ready || e.target.tagName === 'INPUT' || e.metaKey || e.ctrlKey) return;
   if (e.key === 'Shift') { app.shift = true; app.render(); return; }
-  if (app.view === 'pads') { const i = DRUM.indexOf(e.key.toLowerCase()); if (i >= 0) { app.engine.sampler.play(i); e.preventDefault(); } return; }
+  if (e.key === '?' || (e.code === 'Slash' && e.shiftKey)) { e.preventDefault(); if (!e.repeat) toggleKeys(); return; }
+  if (e.code === 'Escape') { $('#keysOverlay').classList.remove('on'); return; }
+  if (app.view === 'pads') { if (e.repeat) return; const i = DRUM.indexOf(e.key.toLowerCase()); if (i >= 0) { app.engine.sampler.play(i); e.preventDefault(); } return; }
   if (e.code === 'ArrowDown' || e.code === 'ArrowUp') { app.browse(e.code === 'ArrowDown' ? 1 : -1, true); e.preventDefault(); return; }
+  if (e.repeat) return;
+  if (e.code === 'ArrowLeft') { app.load(0); e.preventDefault(); return; }   // LOAD ←
+  if (e.code === 'ArrowRight') { app.load(1); e.preventDefault(); return; }  // LOAD →
   if (e.code === 'Enter') { app.load(e.shiftKey ? 1 : 0); return; }
+  if (e.code === 'Tab') { e.preventDefault(); app.toggleView('library'); return; }   // BR.WINDOW
   if (e.code === 'Space') { e.preventDefault(); app.engine.decks.forEach(d => d.togglePlay()); return; }
-  const k = KEYS[e.code]; if (k) { held.add(e.code); app.act(k[0], k[1], true, e.shiftKey); e.preventDefault(); return; }
-  let i = PADS_A.indexOf(e.code); if (i >= 0) { held.add(e.code); app.pad(0, i, true, 1, e.shiftKey); return; }
-  i = PADS_B.indexOf(e.code); if (i >= 0) { held.add(e.code); app.pad(1, i, true, 1, e.shiftKey); }
+  if (e.code === 'Slash') { toast('Swap decks: not in djsly (A is always left)'); return; }
+  const k = KEYS[e.code];
+  if (k) { const action = e.shiftKey && k[2] ? k[2] : k[1]; held.set(e.code, [k[0], action]); app.act(k[0], action, true, e.shiftKey && !k[2]); e.preventDefault(); return; }
+  let i = CUES_A.indexOf(e.code); if (i >= 0) { held.set(e.code, ['cue', 0, i]); hotcueKey(0, i, e); e.preventDefault(); return; }
+  i = CUES_B.indexOf(e.code); if (i >= 0) { held.set(e.code, ['cue', 1, i]); hotcueKey(1, i, e); e.preventDefault(); return; }
+  i = SAMPS.indexOf(e.code); if (i >= 0) { e.shiftKey ? app.engine.sampler.stop(i) : app.engine.sampler.play(i); e.preventDefault(); }
 });
 window.addEventListener('keyup', e => {
   if (e.key === 'Shift') { app.shift = false; app.render(); return; }
-  if (!held.has(e.code)) return; held.delete(e.code);
-  const k = KEYS[e.code]; if (k) return app.act(k[0], k[1], false, e.shiftKey);
-  let i = PADS_A.indexOf(e.code); if (i >= 0) return app.pad(0, i, false, 1, e.shiftKey);
-  i = PADS_B.indexOf(e.code); if (i >= 0) app.pad(1, i, false, 1, e.shiftKey);
+  const h = held.get(e.code); if (!h) return; held.delete(e.code);
+  if (h[0] === 'cue') return app.pad(h[1], h[2], false, 1, false, 'hotcue');
+  app.act(h[0], h[1], false, false);
 });
+window.addEventListener('blur', () => { for (const [code, h] of held) { held.delete(code); if (h[0] === 'cue') app.pad(h[1], h[2], false, 1, false, 'hotcue'); else app.act(h[0], h[1], false, false); } });
+function toggleKeys(force) { const o = $('#keysOverlay'); o.classList.toggle('on', force); }
+$('#keysBtn').onclick = () => toggleKeys(); $('#keysOverlay').onclick = () => toggleKeys(false);
 
 /* ================================================================== boot */
 async function start() {

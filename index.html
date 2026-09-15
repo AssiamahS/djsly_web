@@ -36,6 +36,7 @@
     <button id="split" class="chip" title="Master in left ear, cue in right ear">Split cue</button>
     <button id="rec" class="chip rec">● Rec</button>
     <button id="addBtn" class="chip">+ Tracks</button>
+    <button id="keysBtn" class="chip" title="keyboard shortcuts (?)">Keys</button>
     <input id="fileIn" type="file" accept="audio/*,.mp3,.m4a,.wav,.aac,.flac,.ogg" multiple hidden>
   </div>
 </header>
@@ -43,13 +44,13 @@
 <section class="wave-strip">
   <div class="deck-info" id="info0">
     <div class="title">No track</div>
-    <div class="meta"><span class="artist">Load A</span><span class="key"></span><span class="bpm">--.-</span><span class="time">-00:00.0</span><span class="elapsed">00:00.0</span></div>
+    <div class="meta"><span class="artist">Load A</span><span class="key"></span><span class="bpm">--.-</span><span class="pitch" title="pitch / tempo change"></span><span class="time">-00:00.0</span><span class="elapsed">00:00.0</span></div>
     <canvas class="overview" id="ov0"></canvas>
   </div>
   <div class="scrollwrap"><canvas id="scroll" class="scroll"></canvas></div>
   <div class="deck-info right" id="info1">
     <div class="title">No track</div>
-    <div class="meta"><span class="artist">Load B</span><span class="key"></span><span class="bpm">--.-</span><span class="time">-00:00.0</span><span class="elapsed">00:00.0</span></div>
+    <div class="meta"><span class="artist">Load B</span><span class="key"></span><span class="bpm">--.-</span><span class="pitch" title="pitch / tempo change"></span><span class="time">-00:00.0</span><span class="elapsed">00:00.0</span></div>
     <canvas class="overview" id="ov1"></canvas>
   </div>
 </section>
@@ -93,6 +94,7 @@
 
 <div class="toast"></div>
 <div id="drop">Drop tracks to add them to the library</div>
+<div id="keysOverlay"><div class="card"><img src="keys.png" alt="keyboard layout"><p>Serato layout. Left deck = Q row, right deck = A row · 1–5 / 6–0 hot cues (⇧ set, ⌥ clear) · Z–N sampler · , . set cue · ⇧Q/W prev/next track · ⇧E/R rewind/fast-forward · Tab browser · ← → load · F5/F10 key lock · Space both decks · ? this card</p></div></div>
 <script src="lame.min.js"></script>
 <script type="module" src="js/app.js"></script>
 </body>

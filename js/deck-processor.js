@@ -10,7 +10,7 @@ class DeckProcessor extends AudioWorkletProcessor {
     super();
     this.st = []; this.len = 0;   // stems: [{L,R}]
     this.pos = 0; this.playing = false;
-    this.tempo = 1; this.bend = 0; this.reverse = false;
+    this.tempo = 1; this.bend = 0; this.bendHold = 0; this.reverse = false;
     this.scratching = false; this.scratchRate = 0; this.ticks = 0; this.ticksPerSec = 400; this.scratchIdle = 0;
     this.fx = null;
     this.loopIn = -1; this.loopOut = -1; this.loopOn = false;
@@ -28,6 +28,7 @@ class DeckProcessor extends AudioWorkletProcessor {
       case 'seek': this.pos = Math.max(0, Math.min(this.len - 1, m.pos)); this.resetGrains(); this.report(); break;
       case 'tempo': this.tempo = m.value; break;
       case 'bend': this.bend = m.value; break;
+      case 'bendHold': this.bendHold = m.value; break;
       case 'nudge': this.bend += m.value; break;
       case 'reverse': this.reverse = !!m.value; break;
       case 'scratch': this.scratching = !!m.value; if (this.scratching) { this.scratchRate = 0; this.ticks = 0; this.scratchIdle = 0; } break;
@@ -39,7 +40,7 @@ class DeckProcessor extends AudioWorkletProcessor {
     }
   }
   resetGrains() { this.gA = { read: this.pos, age: 0 }; this.gB = null; }
-  curRate() { return (this.reverse ? -1 : 1) * this.tempo + this.bend; }
+  curRate() { return (this.reverse ? -1 : 1) * this.tempo + this.bend + this.bendHold; }
   report() { this.port.postMessage({ type: 'pos', pos: this.pos, playing: this.playing, rate: this.lastRate }); }
   read(buf, p) { if (p < 0 || p >= this.len - 1) return 0; const i = p | 0, f = p - i; return buf[i] + (buf[i + 1] - buf[i]) * f; }
   process(_inputs, outputs) {

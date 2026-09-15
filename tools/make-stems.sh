@@ -6,7 +6,10 @@ set -euo pipefail
 command -v demucs >/dev/null || { echo "demucs not found: pip3 install demucs"; exit 1; }
 OUT="${DJSLY_STEMS_DIR:-$HOME/djsly-stems}"
 mkdir -p "$OUT"
-demucs -n htdemucs --mp3 --mp3-bitrate 192 -o "$OUT/.work" "$@"
+# GPU (Metal) instead of all CPU cores, one worker, short segments, low priority — the Mac stays usable while it runs.
+DEV="${DJSLY_STEMS_DEVICE:-$(python3 -c 'import torch;print("mps" if torch.backends.mps.is_available() else "cpu")' 2>/dev/null || echo cpu)}"
+echo "demucs htdemucs on $DEV"
+PYTORCH_ENABLE_MPS_FALLBACK=1 OMP_NUM_THREADS=4 nice -n 15 demucs -n htdemucs -d "$DEV" -j 1 --segment 7 --mp3 --mp3-bitrate 192 -o "$OUT/.work" "$@"
 for f in "$@"; do
   name="$(basename "${f%.*}")"
   mkdir -p "$OUT/$name"

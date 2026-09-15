@@ -20,6 +20,22 @@ MODEL = os.environ.get("DJSLY_STEMS_MODEL", "htdemucs")
 CACHE = os.path.expanduser(os.environ.get("DJSLY_STEMS_DIR", "~/djsly-stems")) + "/cache"
 WEB = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 DEMUCS = shutil.which("demucs") or "/opt/homebrew/bin/demucs"
+# Keep the Mac usable while separating: run on the Apple GPU (Metal/MPS) instead of pegging all 8 CPU cores,
+# one worker, short segments (htdemucs max 7 s, int), low priority. djay Pro's Neural Mix works the same way —
+# a small model on the GPU / Neural Engine — which is why it never freezes the machine.
+NICE = os.environ.get("DJSLY_STEMS_NICE", "15")
+def pick_device():
+    want = os.environ.get("DJSLY_STEMS_DEVICE")
+    if want: return want
+    try:
+        r = subprocess.run([sys.executable, "-c", "import torch;print('mps' if torch.backends.mps.is_available() else 'cpu')"], capture_output=True, text=True, timeout=120)
+        if r.stdout.strip() in ("mps", "cpu"): return r.stdout.strip()
+    except Exception as e: print("device probe: " + str(e), flush=True)
+    return "cpu"
+DEVICE = pick_device()
+ENV = {**os.environ, "PYTORCH_ENABLE_MPS_FALLBACK": "1", "OMP_NUM_THREADS": os.environ.get("OMP_NUM_THREADS", "4"), "MKL_NUM_THREADS": "4"}
+def demucs_cmd(device, out_dir, src):
+    return ["nice", "-n", NICE, DEMUCS, "-n", MODEL, "-d", device, "-j", "1", "--segment", "7", "--mp3", "--mp3-bitrate", "192", "-o", out_dir, src]
 CLOUD = os.environ.get("DJSLY_CLOUD_URL", "https://djsly-stems.sylvesterassiamahpm.workers.dev")
 TOKEN_FILE = os.path.expanduser("~/.djsly-stems-token")
 STEMS = ["vocals", "other", "bass", "drums"]
@@ -37,7 +53,13 @@ def run_job(h, data, name):
             with open(src, "wb") as f: f.write(data)
             with lock:
                 with jobs_lock: jobs[h]["status"] = "working"
-                subprocess.run([DEMUCS, "-n", MODEL, "--mp3", "--mp3-bitrate", "192", "-o", tmp, src], check=True, capture_output=True)
+                t0 = time.time()
+                try: subprocess.run(demucs_cmd(DEVICE, tmp, src), check=True, capture_output=True, env=ENV)
+                except subprocess.CalledProcessError as e:
+                    if DEVICE == "cpu": raise
+                    print("demucs on %s failed, retrying on cpu: %s" % (DEVICE, e.stderr.decode(errors="ignore")[-300:]), flush=True)
+                    subprocess.run(demucs_cmd("cpu", tmp, src), check=True, capture_output=True, env=ENV)
+                print("separated %s (%s) in %.0fs on %s" % (name, h[:8], time.time() - t0, DEVICE), flush=True)
             out = os.path.join(CACHE, h); os.makedirs(out, exist_ok=True)
             for s in STEMS: shutil.move(os.path.join(tmp, MODEL, "track", s + ".mp3"), os.path.join(out, s + ".mp3"))
         with jobs_lock: jobs[h] = {"status": "done"}
@@ -100,7 +122,7 @@ class H(SimpleHTTPRequestHandler):
     def log_message(self, fmt, *args): sys.stderr.write("%s %s\n" % (self.address_string(), fmt % args))
     def _cors(self):
         self.send_header("Access-Control-Allow-Origin", "*")
-        self.send_header("Access-Control-Allow-Headers", "Content-Type, X-Filename")
+        self.send_header("Access-Control-Allow-Headers", "Content-Type, X-Filename, X-Hash")
         self.send_header("Access-Control-Allow-Methods", "GET, POST, OPTIONS")
     def end_headers(self):
         self._cors(); super().end_headers()
@@ -112,7 +134,7 @@ class H(SimpleHTTPRequestHandler):
             self.send_response(code); self.send_header("Content-Type", "application/json"); self.send_header("Content-Length", str(len(body))); self.end_headers(); self.wfile.write(body)
         except (BrokenPipeError, ConnectionResetError): pass   # client went away; the job keeps running
     def do_GET(self):
-        if self.path == "/health": return self._json(200, {"ok": True, "model": MODEL, "busy": busy_count(), "server": "djsly-stems"})
+        if self.path == "/health": return self._json(200, {"ok": True, "model": MODEL, "device": DEVICE, "busy": busy_count(), "server": "djsly-stems"})
         parts = self.path.strip("/").split("/")
         if parts[0] == "stems" and len(parts) >= 2 and len(parts[1]) == 40:
             if len(parts) == 2: return self._json(200, status(parts[1]))
@@ -135,5 +157,5 @@ class H(SimpleHTTPRequestHandler):
 if __name__ == "__main__":
     os.makedirs(CACHE, exist_ok=True)
     threading.Thread(target=cloud_agent, daemon=True).start()
-    print(f"djsly stem server on http://0.0.0.0:{PORT}  model={MODEL}  app={WEB}", flush=True)
+    print(f"djsly stem server on http://0.0.0.0:{PORT}  model={MODEL}  device={DEVICE}  app={WEB}", flush=True)
     ThreadingHTTPServer(("0.0.0.0", PORT), H).serve_forever()

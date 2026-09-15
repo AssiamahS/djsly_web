@@ -157,3 +157,11 @@ button:active{transform:translateY(1px)}
 .deck-info .key{align-self:center}
 .track .nm em{font-style:normal;color:var(--acc);font-weight:700;font-size:10px;letter-spacing:.5px}
 .lib-head code{background:var(--panel2);padding:1px 5px;border-radius:4px}
+
+/* pitch % readout + keyboard card */
+.deck-info .pitch{color:var(--dim)}.deck-info .pitch.off{color:var(--acc)}
+#keysOverlay{position:fixed;inset:0;background:rgba(0,0,0,.75);z-index:55;display:none;align-items:center;justify-content:center;padding:20px}
+#keysOverlay.on{display:flex}
+#keysOverlay .card{background:#0e1219;border:1px solid var(--line);border-radius:12px;padding:12px;max-width:940px;width:100%}
+#keysOverlay img{width:100%;height:auto;border-radius:8px;display:block}
+#keysOverlay p{margin:10px 0 0;font-size:12px;color:var(--dim);line-height:1.5}

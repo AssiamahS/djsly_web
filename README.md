@@ -26,7 +26,8 @@ Static site, no build step, runs on GitHub Pages and on iPhone.
 - Rec button records the master straight to **MP3** (192k, lamejs in-browser; share sheet on iPhone).
 - Colored scrolling waveform + overviews, beat markers, cue/loop/hot‑cue markers.
 - Web MIDI: the SB3 is auto‑detected (Chrome/Edge). LEDs light up (play/cue/sync/loop/vinyl/keylock/pad modes/pads).
-- Keyboard: Q/W/E/R = play/cue/sync/loop (deck A), P/O/I/U (deck B), Z–, pads A, 1–8 pads B, Space both, ↑↓ browse, Enter load A, ⇧Enter load B.
+- Keyboard = the Serato DJ default layout (press `?` in the app for the picture): left deck on the Q row, right deck on the A row — REV / PLAY / PITCH− / PITCH+ / BEND− / BEND+ / CENSOR / JUMP CUE / LOOP IN / LOOP OUT / LOOP ON-OFF (Q W E R T Y U I O P [ and A S D F G H J K L ; '); ⇧Q/⇧W prev/next track, ⇧E/⇧R rewind/fast-forward, 1–5 / 6–0 hot cues (⇧ = set, ⌥ = clear), Z–N sampler 1–6, `,` `.` set cue, Tab browser, ← → load A/B, ↑↓ browse, F5/F10 key lock, Space = both decks.
+- Pitch readout like every other DJ app: each deck shows BPM **and** the tempo change in % (e.g. 126 → 130 = +3.17%), and the key badge follows the pitch when key lock is off (+7 on the Camelot wheel per semitone).
 - PWA: add to Home Screen on iPhone for full screen; works offline after first load.
 
 ## DDJ‑SB3 mapping
