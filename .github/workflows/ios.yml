@@ -187,9 +187,9 @@ jobs:
           <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
           <plist version="1.0"><dict><key>items</key><array><dict>
             <key>assets</key><array>
-              <dict><key>kind</key><string>software-package</string><key>url</key><string>https://assiamahs.github.io/djsly_web/ipa/DJ5ly.ipa</string></dict>
-              <dict><key>kind</key><string>display-image</string><key>url</key><string>https://assiamahs.github.io/djsly_web/icon-180.png</string></dict>
-              <dict><key>kind</key><string>full-size-image</string><key>url</key><string>https://assiamahs.github.io/djsly_web/icon-512.png</string></dict>
+              <dict><key>kind</key><string>software-package</string><key>url</key><string>https://assiamahs.github.io/djsly_web/web/ipa/DJ5ly.ipa</string></dict>
+              <dict><key>kind</key><string>display-image</string><key>url</key><string>https://assiamahs.github.io/djsly_web/web/icon-180.png</string></dict>
+              <dict><key>kind</key><string>full-size-image</string><key>url</key><string>https://assiamahs.github.io/djsly_web/web/icon-512.png</string></dict>
             </array>
             <key>metadata</key><dict>
               <key>bundle-identifier</key><string>com.djsly.dj5ly</string>
@@ -215,4 +215,4 @@ jobs:
             git push -q origin HEAD:main && break
             echo "push rejected, retrying ($attempt)"; sleep $((attempt * 5))
           done
-          gh workflow run pages.yml --ref main
+          true  # legacy Pages rebuilds on every push
