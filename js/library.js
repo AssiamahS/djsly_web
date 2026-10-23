@@ -19,4 +19,5 @@ export const Library = {
   },
   async update(id, patch) { const row = await this.get(id); if (!row) return; await tx('readwrite', s => s.put({ ...row, ...patch })); },
   async remove(id) { await tx('readwrite', s => s.delete(id)); },
+  async clear() { await tx('readwrite', s => s.clear()); },
 };

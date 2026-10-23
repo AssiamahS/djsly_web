@@ -59,10 +59,10 @@
   <!-- ================= DECKS + MIXER ================= -->
   <section class="view on" data-view="mix">
     <div class="mobile-tabs" id="mobileTabs">
-      <button data-part="deck0" class="on">Deck A</button><button data-part="mixer">Mixer</button><button data-part="deck1">Deck B</button>
+      <button data-part="all" class="on">All</button><button data-part="deck0">Deck A</button><button data-part="mixer">Mixer</button><button data-part="deck1">Deck B</button>
     </div>
     <div class="controller">
-      <div class="deck part on" data-part="deck0" id="deck0"></div>
+      <div class="deck part" data-part="deck0" id="deck0"></div>
       <div class="mixer part" data-part="mixer" id="mixer"></div>
       <div class="deck part" data-part="deck1" id="deck1"></div>
     </div>
@@ -93,6 +93,7 @@
       </select>
       <button id="libFits" class="chip" title="Only tracks that mix into the playing deck: Camelot ±1 / relative, BPM ±6% (half/double too)">Fits deck</button>
       <span id="libCount" class="count"></span>
+      <button id="libClear" class="chip danger">Clear all</button>
       <span class="hint">MP3 / M4A / WAV / FLAC from Files, iCloud Drive, or drag &amp; drop. Stored on this device. <b>Stems</b> are analysed automatically when the Mac stem server is reachable (<code>server/install.sh</code>); otherwise run <code>tools/make-stems.sh</code> and attach the 4 files.</span>
     </div>
     <div class="lib-list" id="libList"><div class="empty">No tracks yet. Add some.</div></div>

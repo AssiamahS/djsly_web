@@ -126,7 +126,11 @@ export class Deck extends Emitter {
   seek(sec) { this.posFrames = clamp(sec, 0, this.duration) * this.sr; this.posAt = this.ctx.currentTime; this.node.port.postMessage({ type: 'seek', pos: this.posFrames }); this.emit('change'); }
   play() { if (!this.buffer) return; this.engine.resume(); this.playing = true; this.posAt = this.ctx.currentTime; this.rate = this.tempoRate; this.node.port.postMessage({ type: 'play' }); this.emit('change'); }
   pause() { this.playing = false; this.rate = 0; this.node.port.postMessage({ type: 'pause' }); this.emit('change'); }
-  togglePlay() { this.playing ? this.pause() : this.play(); }
+  togglePlay() {
+    // PLAY while CUE (or a hot cue) is held = play takes over: releasing the cue button no longer snaps back
+    if (this.playing && (this.previewing || this._hcPreview != null)) { this.previewing = false; this._hcPreview = null; this.emit('change'); return; }
+    this.playing ? this.pause() : this.play();
+  }
   cue(pressed) {
     if (!this.buffer) return;
     if (pressed) {

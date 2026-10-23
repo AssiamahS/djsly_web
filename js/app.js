@@ -178,6 +178,7 @@ const app = {
       set('play', dk.playing); set('cue', dk.buffer && !dk.playing); set('quantize', dk.quantize); set('sync', dk.synced); set('autoloop', dk.loop.on); set('vinyl', dk.vinyl); set('keylock', dk.keylock); set('headCue', dk.cueOn); set('shift', this.shift);
       b.tempoRange && (b.tempoRange.textContent = `±${Math.round(dk.tempoRange * 100)}%`);
       b.tempoLabel && (b.tempoLabel.textContent = `Tempo ${fmtPct(dk.pitchPct)}`);
+      const ht = this.deckEl?.[d]?.headTitle; if (ht) { const v = dk.track ? `${dk.track.title || dk.track.name} · ${dk.effBpm.toFixed(1)}` : 'No track'; if (ht.textContent !== v) ht.textContent = v; }
       $$('.padmodes .btn', this.deckEl[d]).forEach(x => x.classList.toggle('on', x.dataset.mode === dk.padMode));
       this.padDom[d].forEach((p, i) => {
         const m = dk.padMode; let label = '', lit = false, sub = '';
@@ -277,18 +278,22 @@ function knob(node, get, set, opts = {}) {
 function fader(node, get, set, horizontal = false) {
   node.style.touchAction = 'none'; const cap = el('div', 'cap'); node.append(cap);
   const draw = () => node.style.setProperty('--v', get());
-  const from = e => { const r = node.getBoundingClientRect(); return horizontal ? Math.max(0, Math.min(1, (e.clientX - r.left - 13) / (r.width - 26))) : Math.max(0, Math.min(1, 1 - (e.clientY - r.top - 11) / (r.height - 22))); };
-  let on = false; node.addEventListener('pointerdown', e => { on = true; node.setPointerCapture(e.pointerId); set(from(e)); draw(); e.preventDefault(); });
-  node.addEventListener('pointermove', e => { if (on) { set(from(e)); draw(); } }); node.addEventListener('pointerup', () => on = false); node.addEventListener('pointercancel', () => on = false);
+  // relative drag: touching the fader never jumps it to the finger — the cap moves from where it is, like the real thing
+  let on = false, p0 = 0, v0 = 0; const at = e => horizontal ? e.clientX : -e.clientY;
+  node.addEventListener('pointerdown', e => { on = true; node.setPointerCapture(e.pointerId); p0 = at(e); v0 = get(); e.preventDefault(); });
+  node.addEventListener('pointermove', e => { if (!on) return; const r = node.getBoundingClientRect(); set(Math.max(0, Math.min(1, v0 + (at(e) - p0) / (horizontal ? r.width - 26 : r.height - 22)))); draw(); });
+  node.addEventListener('pointerup', () => on = false); node.addEventListener('pointercancel', () => on = false);
   node.addEventListener('dblclick', () => { set(horizontal ? 0.5 : 1); draw(); });
   draw(); return { draw };
 }
 function jog(node, d) {
-  node.style.touchAction = 'none'; let last = null, id = null;
+  node.style.touchAction = 'none'; let last = null, id = null, ring = false;
   const ang = e => { const r = node.getBoundingClientRect(); return Math.atan2(e.clientY - (r.top + r.height / 2), e.clientX - (r.left + r.width / 2)); };
-  node.addEventListener('pointerdown', e => { id = e.pointerId; node.setPointerCapture(id); last = ang(e); app.jog(d, 'touch', true, app.shift); e.preventDefault(); });
+  // outside the platter (the side of a real jog) = nudge only: no touch, so it bends the pitch instead of scratching/holding
+  const onRing = e => { const r = node.getBoundingClientRect(); return Math.hypot(e.clientX - (r.left + r.width / 2), e.clientY - (r.top + r.height / 2)) > r.width * 0.33; };
+  node.addEventListener('pointerdown', e => { id = e.pointerId; node.setPointerCapture(id); last = ang(e); ring = onRing(e); node.classList.toggle('ring', ring); if (!ring) app.jog(d, 'touch', true, app.shift); e.preventDefault(); });
   node.addEventListener('pointermove', e => { if (e.pointerId !== id) return; const a = ang(e); let da = a - last; if (da > Math.PI) da -= 2 * Math.PI; if (da < -Math.PI) da += 2 * Math.PI; last = a; app.jog(d, 'tick', da / (2 * Math.PI) * 720, app.shift); });
-  const up = () => { if (id == null) return; id = null; app.jog(d, 'touch', false, app.shift); };
+  const up = () => { if (id == null) return; id = null; node.classList.remove('ring'); if (!ring) app.jog(d, 'touch', false, app.shift); };
   node.addEventListener('pointerup', up); node.addEventListener('pointercancel', up);
   node.addEventListener('wheel', e => { e.preventDefault(); app.jog(d, 'tick', -Math.sign(e.deltaY) * 3, app.shift); }, { passive: false });
 }
@@ -319,11 +324,19 @@ function buildDeck(d) {
   const grid = el('div', 'padgrid');
   for (let i = 0; i < 8; i++) { const p = el('div', 'pad'); hold(p, (on, e) => app.pad(d, i, on, e?.pressure ? Math.max(0.4, e.pressure) : 1, app.shift)); grid.append(p); app.padDom[d][i] = p; }
   ps.append(modes, grid);
-  root.append(loop, tr, jw, tw, ps);
+  root.append(partHead(root, `deck${d}`, d ? 'B' : 'A'), loop, tr, jw, tw, ps);
   dk.on('change', () => app.render()); dk.on('load', () => app.renderInfo(d));
 }
+/** Title bar on a deck / the mixer: label, what's loaded, and a button that folds the part down to a slim strip. */
+function partHead(root, key, label) {
+  const h = el('div', 'phead'), t = el('span', 't'), mini = el('button', 'btn tiny fold');
+  h.append(el('b', '', label), t); const set = on => { root.classList.toggle('mini', on); mini.textContent = on ? '▸' : '▾'; };
+  mini.onclick = () => { const on = !root.classList.contains('mini'); set(on); try { localStorage.setItem(`djsly.mini.${key}`, on ? 1 : 0); } catch { } };
+  try { set(localStorage.getItem(`djsly.mini.${key}`) === '1'); } catch { set(false); }
+  h.append(mini); root.headTitle = t; return h;
+}
 function buildMixer() {
-  const root = $('#mixer'), e = app.engine; root.innerHTML = '';
+  const root = $('#mixer'), e = app.engine; root.innerHTML = ''; root.append(partHead(root, 'mixer', 'Mixer'));
   const K = (label, get, set, cls = '') => { const w = el('div'); const k = el('div', `knob ${cls}`); knob(k, get, set); w.append(k, el('div', 'klabel', label)); return w; };
   const browse = el('div', 'browse'); const la = el('button', 'btn', 'Load A'), lb = el('button', 'btn blue', 'Load B');
   hold(la, on => on && app.load(0)); hold(lb, on => on && app.load(1));
@@ -466,9 +479,19 @@ async function start() {
 $('#start').onclick = start;
 $('#gateNote').textContent = isIOS ? 'Tip: add to Home Screen for full-screen. Silent switch must be off.' : (navigator.requestMIDIAccess ? 'Chrome/Edge: allow MIDI when asked.' : 'Safari/Firefox have no Web MIDI — on-screen controls still work.');
 $$('#tabs button').forEach(b => b.onclick = () => app.showView(b.dataset.view));
-$$('#mobileTabs button').forEach(b => b.onclick = () => { $$('#mobileTabs button').forEach(x => x.classList.toggle('on', x === b)); $$('.controller .part').forEach(p => p.classList.toggle('on', p.dataset.part === b.dataset.part)); });
+const showPart = part => {
+  $$('#mobileTabs button').forEach(x => x.classList.toggle('on', x.dataset.part === part));
+  $$('.controller .part').forEach(p => p.classList.toggle('on', part === 'all' || p.dataset.part === part));
+  $('.controller').classList.toggle('all', part === 'all'); try { localStorage.setItem('djsly.part', part); } catch { }
+};
+$$('#mobileTabs button').forEach(b => b.onclick = () => showPart(b.dataset.part));
+try { showPart(localStorage.getItem('djsly.part') || 'all'); } catch { showPart('all'); }
 const fileIn = $('#fileIn'); fileIn.onchange = () => { app.addFiles([...fileIn.files]); fileIn.value = ''; };
 $('#addBtn').onclick = $('#addBtn2').onclick = () => fileIn.click();
+$('#libClear').onclick = async () => {
+  if (!app.lib.length || !confirm(`Remove all ${app.lib.length} tracks (and their stems) from this device? Loaded decks keep playing.`)) return;
+  await Library.clear(); app.lib = []; app.tracks.clear(); app.artUrls.forEach(u => URL.revokeObjectURL(u)); app.artUrls.clear(); app.sel = 0; app.renderLib(); toast('Library cleared');
+};
 $('#libSearch').oninput = e => { app.libQuery = e.target.value; app.sel = 0; app.renderLib(); };
 $('#libSort').value = app.libSort;
 $('#libSort').onchange = e => { app.libSort = e.target.value; localStorage.setItem('djsly.libSort', app.libSort); app.renderLib(); };
