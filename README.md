@@ -1,5 +1,7 @@
 # djsly — DDJ‑SB3 Web DJ
 
+**Install:** open [assiamahs.github.io/djsly_web/web/install.html](https://assiamahs.github.io/djsly_web/web/install.html) in Safari on your iPhone.
+
 Browser DJ player for the Pioneer **DDJ‑SB3**, in the spirit of Tribe's web player but free and yours.
 Static site, no build step, runs on GitHub Pages and on iPhone. Native shells: **DJ5ly** for iPhone (`ios/`) and **DJ5ly for Mac** — download [DJ5ly-mac.zip](https://github.com/AssiamahS/djsly_web/releases/latest/download/DJ5ly-mac.zip), built by CI from `.github/workflows/mac.yml`.
 
