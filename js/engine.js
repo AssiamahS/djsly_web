@@ -389,7 +389,7 @@ export class Engine extends Emitter {
     this.decks = [new Deck(this, 0), new Deck(this, 1)];
     this.sampler = new Sampler(this); this.sampler.loadKit();
     this.crossfader = 0.5; this.setCrossfader(0.5); this.setMaster(0.8);
-    this.worker = new Worker(new URL('./analysis-worker.js', import.meta.url)); this._jobs = {}; this._jobId = 0;
+    this.worker = new Worker(new URL('./analysis-worker.js', import.meta.url), { type: 'module' }); this._jobs = {}; this._jobId = 0;
     this.worker.onmessage = e => { const j = this._jobs[e.data.id]; if (j) { delete this._jobs[e.data.id]; j(e.data); } };
     setInterval(() => this.tick(), 33);
     this.ready = true;
@@ -404,11 +404,11 @@ export class Engine extends Emitter {
   setSplitCue(on) { this.splitCue = on; const now = this.ctx.currentTime; this.mainOut.gain.setTargetAtTime(on ? 0 : 1, now, 0.01); this.splitOutM.gain.setTargetAtTime(on ? 1 : 0, now, 0.01); this.splitOutC.gain.setTargetAtTime(on ? 1 : 0, now, 0.01); this.emit('mixer'); }
   tick() { this.decks.forEach(d => d.tick()); this.masterAn.getFloatTimeDomainData(this._mv); let s = 0; for (let i = 0; i < 512; i += 4) s += this._mv[i] ** 2; this.masterLevel = Math.max(Math.sqrt(s / 128) * 1.6, this.masterLevel * 0.85); }
   async decode(arrayBuffer) { return this.ctx.decodeAudioData(arrayBuffer); }
-  analyze(buffer, cols = 600) {
+  analyze(buffer, cols = 600, bpmHint = 0) {
     return new Promise(res => {
       const id = ++this._jobId; this._jobs[id] = res;
       const L = buffer.getChannelData(0).slice(0), R = buffer.numberOfChannels > 1 ? buffer.getChannelData(1).slice(0) : null;
-      this.worker.postMessage({ id, L, R, sampleRate: buffer.sampleRate, cols }, R ? [L.buffer, R.buffer] : [L.buffer]);
+      this.worker.postMessage({ id, L, R, sampleRate: buffer.sampleRate, cols, bpmHint }, R ? [L.buffer, R.buffer] : [L.buffer]);
     });
   }
   /* recorder — MP3 via lamejs (192k) so the file plays everywhere; MediaRecorder only as a fallback */

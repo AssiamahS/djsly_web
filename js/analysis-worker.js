@@ -1,9 +1,10 @@
 /* djsly analysis worker — BPM + beat-grid phase + waveform peaks, off the UI thread.
- * in : { id, L, R, sampleRate, cols }    (Float32Arrays, transferred)
+ * in : { id, L, R, sampleRate, cols, bpmHint? }    (Float32Arrays, transferred; bpmHint = the file's tagged BPM, trusted over detection)
  * out: { id, bpm, firstBeat (sec, a downbeat), key, camelot, overview, bands, detail }
  */
+import { NAMES, CAMELOT_MAJ, CAMELOT_MIN } from './keys.js';
 self.onmessage = e => {
-  const { id, L, R, sampleRate: sr, cols } = e.data;
+  const { id, L, R, sampleRate: sr, cols, bpmHint } = e.data;
   const n = L.length;
   // ---------- mono + onset envelope ----------
   const hop = 512;
@@ -78,6 +79,7 @@ self.onmessage = e => {
   // snap near-integers (most produced music is on an integer bpm)
   if (Math.abs(bpm - Math.round(bpm)) < 0.06) bpm = Math.round(bpm);
   bpm = Math.round(bpm * 100) / 100;
+  if (bpmHint > 40 && bpmHint < 250) bpm = bpmHint;
   const period = 60 / bpm * fps; // frames per beat
   // ---------- phase: comb filter over the onset function ----------
   let bestPh = 0, bestPS = -1;
@@ -127,9 +129,6 @@ function fft(re, im) { // in-place radix-2
   for (let len = 2; len <= n; len <<= 1) { const ang = -2 * Math.PI / len, wr = Math.cos(ang), wi = Math.sin(ang);
     for (let i = 0; i < n; i += len) { let cr = 1, ci = 0; for (let j = 0; j < len / 2; j++) { const a = i + j, b = a + len / 2; const tr = re[b] * cr - im[b] * ci, ti = re[b] * ci + im[b] * cr; re[b] = re[a] - tr; im[b] = im[a] - ti; re[a] += tr; im[a] += ti; const nr = cr * wr - ci * wi; ci = cr * wi + ci * wr; cr = nr; } } }
 }
-const NAMES = ['C', 'Db', 'D', 'Eb', 'E', 'F', 'F#', 'G', 'Ab', 'A', 'Bb', 'B'];
-const CAMELOT_MAJ = ['8B', '3B', '10B', '5B', '12B', '7B', '2B', '9B', '4B', '11B', '6B', '1B'];
-const CAMELOT_MIN = ['5A', '12A', '7A', '2A', '9A', '4A', '11A', '6A', '1A', '8A', '3A', '10A'];
 const MAJ = [6.35, 2.23, 3.48, 2.33, 4.38, 4.09, 2.52, 5.19, 2.39, 3.66, 2.29, 2.88], MIN = [6.33, 2.68, 3.52, 5.38, 2.60, 3.53, 2.54, 4.75, 3.98, 2.69, 3.34, 3.17];
 function detectKey(L, R, sr) {
   const N = 8192, chroma = new Float64Array(12), re = new Float32Array(N), im = new Float32Array(N), win = new Float32Array(N);

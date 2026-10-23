@@ -1,6 +1,8 @@
 /* djsly — UI + glue. The controller mapping and the on-screen skin both talk to the small `app` API below. */
 import { Engine, ROLL_SIZES, STEMS } from './engine.js';
 import { Library } from './library.js';
+import { readTags } from './tags.js';
+import { camelotFits, bpmFits } from './keys.js';
 import { Midi } from './midi.js';
 
 const $ = (s, r = document) => r.querySelector(s); const $$ = (s, r = document) => [...r.querySelectorAll(s)];
@@ -8,6 +10,10 @@ const el = (tag, cls, html) => { const e = document.createElement(tag); if (cls)
 const fmtPct = p => `${p > 0 ? '+' : p < 0 ? '−' : ''}${Math.abs(p).toFixed(2)}%`;
 const fmtT = t => { const s = Math.abs(t); const m = Math.floor(s / 60), r = s - m * 60; return `${t < 0 ? '-' : ''}${String(m).padStart(2, '0')}:${r.toFixed(1).padStart(4, '0')}`; };
 let toastT; const toast = m => { const t = $('.toast'); t.textContent = m; t.classList.add('show'); clearTimeout(toastT); toastT = setTimeout(() => t.classList.remove('show'), 1800); };
+const esc = s => String(s ?? '').replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' })[c]);
+/** readTags() output → library row fields (bpmSrc/keySrc mark values that beat our own detection). */
+const tagMeta = ({ source, ...t }) => { const m = { ...t, tagged: 1 }; if (source) m.bpmSrc = source; if (t.camelot) m.keySrc = 'tag'; return m; };
+const camelotOrder = c => { const m = String(c || '').match(/^(\d+)([AB])$/); return m ? +m[1] * 2 + (m[2] === 'B') : 99; };
 const isIOS = /iP(hone|ad|od)/.test(navigator.userAgent) || (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1);
 
 const app = {
@@ -73,16 +79,16 @@ const app = {
   fx(unit, i, pressed, shift) { if (!pressed) return; const f = this.engine.decks[unit].fx; f.set(i, !f.on[i]); this.render(); },
   fxKnob(unit, x) { this.engine.decks[unit].fx.setDepth(x); },
   fxBeat() { },
-  browse(delta, shift) { if (!this.lib.length) return; this.sel = (this.sel + (delta > 0 ? 1 : -1) + this.lib.length) % this.lib.length; this.renderLib(); if (this.view !== 'library' && !shift) this.showView('library'); },
+  browse(delta, shift) { const n = this.libView.length; if (!n) return; this.sel = (this.sel + (delta > 0 ? 1 : -1) + n) % n; this.renderLib(); if (this.view !== 'library' && !shift) this.showView('library'); },
   browseClick(shift) { if (shift) return this.toggleView('library'); const free = this.engine.decks.findIndex(d => !d.playing); this.load(free < 0 ? 0 : free); },
-  load(d) { const t = this.lib[this.sel]; if (t) this.loadToDeck(d, t.id); },
+  load(d) { const t = this.libView[this.sel]; if (t) this.loadToDeck(d, t.id); },
   toggleView(v) { this.showView(this.view === v ? 'mix' : v); },
   setSplit(on) { this.engine.setSplitCue(on); $('#split').classList.toggle('on', on); localStorage.setItem('djsly.split', on ? 1 : 0); },
   /* ---- tracks ---- */
   async addFiles(files) {
     for (const f of files) {
       if (!/audio|mp3|m4a|wav|flac|aac|ogg/i.test(f.type + f.name)) continue;
-      const meta = await Library.add(f); this.lib.push(meta); this.renderLib(); toast(`Added ${meta.name}`);
+      const meta = await Library.add(f, tagMeta(await readTags(f))); this.lib.push(meta); this.renderLib(); toast(`Added ${meta.name}`);
       this.analyzeTrack(meta.id).then(() => this.autoStems(meta.id)).catch(e => console.warn(e));
     }
   },
@@ -94,7 +100,10 @@ const app = {
   },
   async analyzeTrack(id) {
     const t = await this.getBuffer(id); if (t.an) return t.an;
-    t.an = await this.engine.analyze(t.buffer, 600);
+    const row = this.lib.find(x => x.id === id) || {};
+    t.an = await this.engine.analyze(t.buffer, 600, row.bpmSrc ? row.bpm : 0);   // tagged BPM wins, detection only finds the phase
+    if (row.bpmSrc === 'serato' && row.firstBeat != null) t.an.firstBeat = row.firstBeat; // Serato's grid is the grid
+    if (row.keySrc) Object.assign(t.an, { key: row.key, camelot: row.camelot });
     const patch = { bpm: t.an.bpm, firstBeat: t.an.firstBeat, duration: t.buffer.duration, key: t.an.key, camelot: t.an.camelot };
     Object.assign(this.lib.find(x => x.id === id) || {}, patch); await Library.update(id, patch); this.renderLib();
     return t.an;
@@ -110,7 +119,7 @@ const app = {
       stems = t.stems;
     }
     await dk.load({ ...meta, bpm: an.bpm, firstBeat: an.firstBeat, key: an.key, camelot: an.camelot, buffer: t.buffer, stems });
-    this.renderInfo(d); this.render(); toast(`${d ? 'B' : 'A'}: ${meta.name} · ${an.bpm} BPM`);
+    this.renderInfo(d); this.render(); this.renderLib(); toast(`${d ? 'B' : 'A'}: ${meta.name} · ${an.bpm} BPM`);
   },
   /* ---- stem server (Mac running server/stems_server.py; reachable direct, on the LAN, or through the relay) ---- */
   stemServer: null, stemJobs: new Set(),
@@ -195,12 +204,40 @@ const app = {
     const k = $('.key', info); k.textContent = dk.effCamelot; k.dataset.c = dk.effCamelot; k.title = dk.effKey; dk._keyShown = dk.effCamelot;
     $('.bpm', info).title = dk.bpm ? `original ${dk.bpm.toFixed(1)} BPM` : '';
   },
+  /* tracks added before the tag reader existed: read their tags once from the stored file */
+  async backfillTags() {
+    for (const t of this.lib.filter(x => !x.tagged)) {
+      const row = await Library.get(t.id); if (!row?.blob) continue;
+      const patch = tagMeta(await readTags(row.blob));
+      if (row.hotcues?.some(c => c != null)) delete patch.hotcues;       // never clobber cues set in the app
+      Object.assign(t, patch); await Library.update(t.id, patch);
+    }
+    this.renderLib();
+  },
+  libView: [], libQuery: '', libSort: localStorage.getItem('djsly.libSort') || 'added', libFitsOnly: false, artUrls: new Map(),
+  /** The deck you'd mix *from*: the playing one, else whichever is loaded. */
+  refDeck() { const ds = this.engine?.decks || []; return ds.find(d => d.playing && d.buffer) || ds.find(d => d.buffer) || null; },
   renderLib() {
     const list = $('#libList'); list.innerHTML = '';
-    if (!this.lib.length) { list.append(el('div', 'empty', 'No tracks yet. Tap “+ Add tracks”.')); return; }
-    this.lib.forEach((t, i) => {
-      const row = el('div', 'track' + (i === this.sel ? ' sel' : ''));
-      row.innerHTML = `<div class="nm">${t.title || t.name}<small>${t.artist || ''}${t.hasStems ? ' · <em>STEMS</em>' : t.stemming ? ' · <em class="busy">STEMS…</em>' : ''}</small></div><span class="key" data-c="${t.camelot || ''}" title="${t.key || ''}">${t.camelot || ''}</span><div class="bpm">${t.bpm ? t.bpm.toFixed(1) : '…'}</div><div class="dur">${t.duration ? fmtT(t.duration) : ''}</div>`;
+    if (!this.lib.length) { this.libView = []; list.append(el('div', 'empty', 'No tracks yet. Tap “+ Add tracks”.')); return; }
+    const ref = this.refDeck(), refBpm = ref ? ref.effBpm || ref.bpm : 0, refKey = ref ? ref.effCamelot : '';
+    const fits = t => !!ref && t.id !== ref.track?.id && camelotFits(refKey, t.camelot) && bpmFits(t.bpm, refBpm);
+    const q = this.libQuery.trim().toLowerCase(), qn = parseFloat(q);
+    const match = t => !q || (/^\d+(\.\d+)?$/.test(q) ? Math.abs((t.bpm || 0) - qn) <= 3 : /^\d{1,2}[ab]$/.test(q) ? (t.camelot || '').toLowerCase() === q
+      : [t.title, t.artist, t.album, t.genre, t.name].some(v => v && v.toLowerCase().includes(q)));
+    const by = { added: (a, b) => b.added - a.added, title: (a, b) => (a.title || a.name).localeCompare(b.title || b.name), artist: (a, b) => (a.artist || '~').localeCompare(b.artist || '~'),
+      bpm: (a, b) => (a.bpm || 999) - (b.bpm || 999), key: (a, b) => camelotOrder(a.camelot) - camelotOrder(b.camelot), genre: (a, b) => (a.genre || '~').localeCompare(b.genre || '~') }[this.libSort] || (() => 0);
+    this.libView = this.lib.filter(t => match(t) && (!this.libFitsOnly || fits(t))).sort(by);
+    this.sel = Math.min(this.sel, Math.max(0, this.libView.length - 1));
+    $('#libCount').textContent = `${this.libView.length}/${this.lib.length}` + (ref ? ` · fits ${ref === this.engine.decks[0] ? 'A' : 'B'} ${refKey} ${refBpm ? refBpm.toFixed(1) : ''}` : '');
+    if (!this.libView.length) { list.append(el('div', 'empty', this.libFitsOnly ? 'Nothing fits the playing track.' : 'No matches.')); return; }
+    this.libView.forEach((t, i) => {
+      const row = el('div', 'track' + (i === this.sel ? ' sel' : '') + (fits(t) ? ' fits' : ''));
+      let art = this.artUrls.get(t.id); if (!art && t.art) { art = URL.createObjectURL(t.art); this.artUrls.set(t.id, art); }
+      const sub = [t.artist, t.genre].filter(Boolean).map(esc).join(' · ') + (t.hasStems ? ' · <em>STEMS</em>' : t.stemming ? ' · <em class="busy">STEMS…</em>' : '');
+      row.innerHTML = (art ? `<img class="art" src="${art}" alt="">` : `<div class="art none">${esc((t.title || t.name).slice(0, 1).toUpperCase())}</div>`)
+        + `<div class="nm">${esc(t.title || t.name)}<small>${sub}</small></div><span class="key" data-c="${t.camelot || ''}" title="${esc(t.key)}${t.keySrc ? ' (from tags)' : ''}">${t.camelot || ''}</span>`
+        + `<div class="bpm" title="${t.bpmSrc === 'serato' ? 'Serato beatgrid' : t.bpmSrc ? 'from tags' : 'detected'}">${t.bpm ? t.bpm.toFixed(1) : '…'}${t.bpmSrc ? '<i>•</i>' : ''}</div><div class="dur">${t.duration ? fmtT(t.duration) : ''}</div>`;
       const a = el('button', 'btn', 'A'), b = el('button', 'btn blue', 'B'), st = el('button', 'btn tiny' + (t.hasStems ? ' on' : ''), 'Stems'), x = el('button', 'del', '✕');
       st.onclick = e => { e.stopPropagation(); this.importStems(t.id); };
       a.onclick = e => { e.stopPropagation(); this.loadToDeck(0, t.id); }; b.onclick = e => { e.stopPropagation(); this.loadToDeck(1, t.id); };
@@ -378,7 +415,7 @@ const DRUM = '1234qwerasdfzxcv';
 const held = new Map();
 const hotcueKey = (d, i, e) => { const dk = app.engine.decks[d]; if (!dk.buffer) return; if (e.altKey) { dk.hotcues[i] = null; dk._saveCues(); app.render(); } else if (e.shiftKey) { dk.hotcues[i] = dk.snap(dk.pos); dk._saveCues(); app.render(); } else app.pad(d, i, true, 1, false, 'hotcue'); };
 window.addEventListener('keydown', e => {
-  if (!app.engine?.ready || e.target.tagName === 'INPUT' || e.metaKey || e.ctrlKey) return;
+  if (!app.engine?.ready || /^(INPUT|SELECT)$/.test(e.target.tagName) || e.metaKey || e.ctrlKey) return;
   if (e.key === 'Shift') { app.shift = true; app.render(); return; }
   if (e.key === '?' || (e.code === 'Slash' && e.shiftKey)) { e.preventDefault(); if (!e.repeat) toggleKeys(); return; }
   if (e.code === 'Escape') { $('#keysOverlay').classList.remove('on'); return; }
@@ -414,7 +451,7 @@ async function start() {
     app.engine = new Engine(); await app.engine.init(); app.engine.resume();
     app.engine.on('savecues', (id, hc) => Library.update(id, { hotcues: hc }));
     buildDeck(0); buildDeck(1); buildMixer(); buildDrumpad();
-    app.lib = await Library.list(); app.renderLib();
+    app.lib = await Library.list(); app.renderLib(); app.backfillTags().catch(e => console.warn(e));
     app.findStemServer().then(ok => { if (ok) app.lib.filter(t => !t.hasStems && t.bpm).forEach(t => app.autoStems(t.id)); });
     app.midi = new Midi(app); const ok = await app.midi.init();
     const ms = $('#midiStatus');
@@ -432,6 +469,10 @@ $$('#tabs button').forEach(b => b.onclick = () => app.showView(b.dataset.view));
 $$('#mobileTabs button').forEach(b => b.onclick = () => { $$('#mobileTabs button').forEach(x => x.classList.toggle('on', x === b)); $$('.controller .part').forEach(p => p.classList.toggle('on', p.dataset.part === b.dataset.part)); });
 const fileIn = $('#fileIn'); fileIn.onchange = () => { app.addFiles([...fileIn.files]); fileIn.value = ''; };
 $('#addBtn').onclick = $('#addBtn2').onclick = () => fileIn.click();
+$('#libSearch').oninput = e => { app.libQuery = e.target.value; app.sel = 0; app.renderLib(); };
+$('#libSort').value = app.libSort;
+$('#libSort').onchange = e => { app.libSort = e.target.value; localStorage.setItem('djsly.libSort', app.libSort); app.renderLib(); };
+$('#libFits').onclick = e => { app.libFitsOnly = !app.libFitsOnly; e.currentTarget.classList.toggle('on', app.libFitsOnly); app.sel = 0; app.renderLib(); };
 $('#split').onclick = () => app.setSplit(!app.engine.splitCue);
 let recOn = false; $('#rec').onclick = async () => {
   if (!recOn) { app.engine.startRec(); recOn = true; $('#rec').classList.add('on'); $('#rec').textContent = '■ Stop'; toast('Recording master'); return; }
