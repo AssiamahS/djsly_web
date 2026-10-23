@@ -1,0 +1,71 @@
+name: Mac
+
+# DJ5ly for the Mac: same WKWebView shell + CoreMIDI bridge as the iPhone app, ad hoc signed
+# (no Developer ID on this account) and published as a GitHub Release — nothing is committed back.
+# Download: https://github.com/AssiamahS/djsly_web/releases/latest/download/DJ5ly-mac.zip
+# First launch needs right-click → Open (or System Settings → Privacy & Security → Open Anyway).
+on:
+  push:
+    branches: [main]
+    paths:
+      - "ios/**"
+      - "js/**"
+      - "controllers/**"
+      - "index.html"
+      - "style.css"
+      - ".github/workflows/mac.yml"
+  workflow_dispatch:
+
+concurrency:
+  group: mac-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  mac:
+    name: Build, ad hoc sign, release
+    runs-on: macos-26
+    timeout-minutes: 30
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+      - name: Bundle the web app into the app target
+        run: bash ios/bundle-web.sh
+      - name: Install XcodeGen
+        run: brew install xcodegen
+      - name: Generate Xcode project
+        working-directory: ios
+        run: xcodegen generate
+      - name: Build, ad hoc sign, zip
+        working-directory: ios
+        run: |
+          set -o pipefail
+          xcodebuild build \
+            -project DJ5ly.xcodeproj \
+            -scheme DJ5lyMac \
+            -configuration Release \
+            -destination 'generic/platform=macOS' \
+            -derivedDataPath build/mac \
+            CODE_SIGNING_ALLOWED=NO CODE_SIGNING_REQUIRED=NO CODE_SIGN_IDENTITY="" \
+            CURRENT_PROJECT_VERSION=$GITHUB_RUN_NUMBER
+          APP="build/mac/Build/Products/Release/DJ5ly.app"
+          codesign --force --deep --sign - "$APP"
+          codesign --verify --deep --strict "$APP"
+          test -f "$APP/Contents/Resources/web/index.html"
+          mkdir -p build/macdist
+          ditto -c -k --keepParent "$APP" build/macdist/DJ5ly-mac.zip
+          ls -la build/macdist
+      - uses: actions/upload-artifact@v4
+        with:
+          name: DJ5ly-mac
+          path: ios/build/macdist/DJ5ly-mac.zip
+      - name: Publish GitHub Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          VERSION=$(/usr/libexec/PlistBuddy -c 'Print :CFBundleShortVersionString' "ios/build/mac/Build/Products/Release/DJ5ly.app/Contents/Info.plist")
+          TAG="mac-v$VERSION-$GITHUB_RUN_NUMBER"
+          gh release create "$TAG" ios/build/macdist/DJ5ly-mac.zip \
+            --target "$GITHUB_SHA" --latest \
+            --title "DJ5ly for Mac $VERSION (build $GITHUB_RUN_NUMBER)" \
+            --notes "Unzip, drag **DJ5ly.app** to Applications, first launch = right-click → Open. Plug the DDJ-SB3 in over USB; recordings save to ~/Music/DJ5ly. Built from ${GITHUB_SHA::7}."

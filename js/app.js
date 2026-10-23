@@ -440,7 +440,7 @@ let recOn = false; $('#rec').onclick = async () => {
   const name = `djsly-set-${d.getFullYear()}${p(d.getMonth() + 1)}${p(d.getDate())}-${p(d.getHours())}${p(d.getMinutes())}.${ext}`; const file = new File([blob], name, { type: blob.type });
   if (window.__djslyNative?.file) { // native app: write into Documents (visible in Files) + share sheet
     const b64 = await new Promise(res => { const fr = new FileReader(); fr.onload = () => res(fr.result.split(',')[1]); fr.readAsDataURL(blob); });
-    window.webkit.messageHandlers.file.postMessage({ name, b64 }); toast(`Saved ${name} to Files`); return;
+    window.webkit.messageHandlers.file.postMessage({ name, b64 }); toast(isIOS ? `Saved ${name} to Files` : `Saved ${name} to Music/DJ5ly`); return;
   }
   if (isIOS && navigator.canShare?.({ files: [file] })) { try { await navigator.share({ files: [file], title: name }); return; } catch { } }
   const a = document.createElement('a'); a.href = URL.createObjectURL(blob); a.download = name; a.click(); setTimeout(() => URL.revokeObjectURL(a.href), 5000); toast(`Saved ${name}`);

@@ -3,6 +3,7 @@ options:
   bundleIdPrefix: com.djsly
   deploymentTarget:
     iOS: "26.0"
+    macOS: "26.0"
   xcodeVersion: "26.0"
 settings:
   base:
@@ -54,5 +55,37 @@ targets:
         UIBackgroundModes:
           - audio
         NSLocalNetworkUsageDescription: "DJ5ly looks for your Mac's stem server on the local network."
+        NSAppTransportSecurity:
+          NSAllowsLocalNetworking: true
+  DJ5lyMac:
+    # Same WKWebView shell on the Mac; iPhone-only bits are behind #if os(iOS).
+    # CI ad hoc signs it and publishes the zip as a GitHub Release (.github/workflows/mac.yml).
+    type: application
+    platform: macOS
+    sources:
+      - path: DJ5ly
+        excludes:
+          - "Resources/**"
+      - path: DJ5ly/Resources/web
+        type: folder
+        buildPhase: resources
+      - path: DJ5lyMac
+    settings:
+      PRODUCT_BUNDLE_IDENTIFIER: com.djsly.dj5ly.mac
+      PRODUCT_NAME: DJ5ly
+      CODE_SIGN_STYLE: Automatic
+      ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon
+      ENABLE_HARDENED_RUNTIME: NO
+      COMBINE_HIDPI_IMAGES: YES
+    info:
+      path: DJ5lyMac/Info.plist
+      properties:
+        CFBundleName: DJ5ly
+        CFBundleDisplayName: DJ5ly
+        CFBundleShortVersionString: $(MARKETING_VERSION)
+        CFBundleVersion: $(CURRENT_PROJECT_VERSION)
+        ITSAppUsesNonExemptEncryption: false
+        LSApplicationCategoryType: public.app-category.music
+        LSMinimumSystemVersion: $(MACOSX_DEPLOYMENT_TARGET)
         NSAppTransportSecurity:
           NSAllowsLocalNetworking: true

@@ -1,39 +1,61 @@
 import SwiftUI
 import WebKit
 import UniformTypeIdentifiers
+#if os(iOS)
+import UIKit
+typealias PlatformViewRepresentable = UIViewRepresentable
+#else
+import AppKit
+typealias PlatformViewRepresentable = NSViewRepresentable
+#endif
 
 /// Hosts the djsly web app from the bundled `web/` folder behind a custom scheme so it gets a real,
 /// secure origin (AudioWorklet, crypto.subtle and IndexedDB all need one), plus native bridges:
-///   midi  — CoreMIDI in/out exposed to the page as a Web MIDI polyfill (Safari has none)
-///   file  — save a recording into Documents and offer the share sheet
-struct DJWebView: UIViewRepresentable {
+///   midi  — CoreMIDI in/out exposed to the page as a Web MIDI polyfill (WebKit has none)
+///   file  — save a recording (iPhone: Documents + share sheet, Mac: ~/Music/DJ5ly + Finder)
+struct DJWebView: PlatformViewRepresentable {
     func makeCoordinator() -> Coordinator { Coordinator() }
-    func makeUIView(context: Context) -> WKWebView {
+    #if os(iOS)
+    func makeUIView(context: Context) -> WKWebView { makeWebView(context.coordinator) }
+    func updateUIView(_ uiView: WKWebView, context: Context) {}
+    #else
+    func makeNSView(context: Context) -> WKWebView { makeWebView(context.coordinator) }
+    func updateNSView(_ nsView: WKWebView, context: Context) {}
+    #endif
+
+    private func makeWebView(_ coordinator: Coordinator) -> WKWebView {
         let cfg = WKWebViewConfiguration()
         cfg.setURLSchemeHandler(BundleSchemeHandler(), forURLScheme: "djsly")
-        cfg.allowsInlineMediaPlayback = true
         cfg.mediaTypesRequiringUserActionForPlayback = []
-        cfg.allowsPictureInPictureMediaPlayback = false
         cfg.defaultWebpagePreferences.allowsContentJavaScript = true
+        #if os(iOS)
+        cfg.allowsInlineMediaPlayback = true
+        cfg.allowsPictureInPictureMediaPlayback = false
+        #endif
         let ucc = cfg.userContentController
-        ucc.add(context.coordinator, name: "midi")
-        ucc.add(context.coordinator, name: "file")
+        ucc.add(coordinator, name: "midi")
+        ucc.add(coordinator, name: "file")
         ucc.addUserScript(WKUserScript(source: MidiBridge.polyfill, injectionTime: .atDocumentStart, forMainFrameOnly: true))
         let wv = WKWebView(frame: .zero, configuration: cfg)
+        #if os(iOS)
         wv.isOpaque = false
         wv.backgroundColor = UIColor(red: 0.043, green: 0.051, blue: 0.071, alpha: 1)
         wv.scrollView.bounces = false
         wv.scrollView.contentInsetAdjustmentBehavior = .never
+        #else
+        wv.underPageBackgroundColor = NSColor(red: 0.043, green: 0.051, blue: 0.071, alpha: 1)
+        wv.isInspectable = true   // right-click → Inspect Element
+        #endif
         wv.allowsBackForwardNavigationGestures = false
-        wv.navigationDelegate = context.coordinator
-        context.coordinator.webView = wv
-        context.coordinator.midi.attach(to: wv)
+        wv.navigationDelegate = coordinator
+        wv.uiDelegate = coordinator
+        coordinator.webView = wv
+        coordinator.midi.attach(to: wv)
         wv.load(URLRequest(url: URL(string: "djsly://app/index.html")!))
         return wv
     }
-    func updateUIView(_ uiView: WKWebView, context: Context) {}
 
-    final class Coordinator: NSObject, WKScriptMessageHandler, WKNavigationDelegate {
+    final class Coordinator: NSObject, WKScriptMessageHandler, WKNavigationDelegate, WKUIDelegate {
         weak var webView: WKWebView?
         let midi = MidiBridge()
         func userContentController(_ ucc: WKUserContentController, didReceive message: WKScriptMessage) {
@@ -47,13 +69,19 @@ struct DJWebView: UIViewRepresentable {
             }
         }
         func webView(_ webView: WKWebView, didFinish navigation: WKNavigation!) { midi.pushDevices() }
-        // External links (README etc.) open in Safari; everything else stays in the app.
+        // External links (README etc.) open in the browser; everything else stays in the app.
         func webView(_ webView: WKWebView, decidePolicyFor action: WKNavigationAction, decisionHandler: @escaping (WKNavigationActionPolicy) -> Void) {
             if let url = action.request.url, url.scheme == "http" || url.scheme == "https", action.navigationType == .linkActivated {
-                UIApplication.shared.open(url); decisionHandler(.cancel); return
+                #if os(iOS)
+                UIApplication.shared.open(url)
+                #else
+                NSWorkspace.shared.open(url)
+                #endif
+                decisionHandler(.cancel); return
             }
             decisionHandler(.allow)
         }
+        #if os(iOS)
         private func save(name: String, data: Data) {
             let docs = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask)[0]
             let url = docs.appendingPathComponent(name)
@@ -66,6 +94,25 @@ struct DJWebView: UIViewRepresentable {
                 root.present(share, animated: true)
             }
         }
+        #else
+        private func save(name: String, data: Data) {
+            let dir = FileManager.default.urls(for: .musicDirectory, in: .userDomainMask)[0].appendingPathComponent("DJ5ly", isDirectory: true)
+            try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+            let url = dir.appendingPathComponent(name)
+            guard (try? data.write(to: url, options: .atomic)) != nil else { return }
+            DispatchQueue.main.async { NSWorkspace.shared.activateFileViewerSelecting([url]) }
+        }
+        // WKWebView on macOS ignores <input type=file> unless the host shows the panel itself.
+        func webView(_ webView: WKWebView, runOpenPanelWith parameters: WKOpenPanelParameters, initiatedByFrame frame: WKFrameInfo, completionHandler: @escaping ([URL]?) -> Void) {
+            let panel = NSOpenPanel()
+            panel.allowsMultipleSelection = parameters.allowsMultipleSelection
+            panel.canChooseDirectories = parameters.allowsDirectories
+            panel.canChooseFiles = true
+            panel.allowedContentTypes = [.audio]
+            panel.directoryURL = FileManager.default.urls(for: .musicDirectory, in: .userDomainMask).first
+            panel.begin { completionHandler($0 == .OK ? panel.urls : nil) }
+        }
+        #endif
     }
 }
 
